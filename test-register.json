@@ -1,0 +1,11 @@
+{
+  "name": "Ali Traoré",
+  "phone": "+227 12345678",
+  "whatsapp": "+227 98765432",
+  "email": "ali@example.com",
+  "password": "password123",
+  "businessType": "individual",
+  "businessName": "Boutique Ali",
+  "description": "Vente de produits électroniques et accessoires",
+  "location": "Niamey"
+}
