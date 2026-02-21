@@ -27,6 +27,11 @@ router.get('/my/listings', protect, productController.getMyProducts);
 // @access  Private
 router.get('/my/stats', protect, productController.getMyStats);
 
+// @route   GET /api/products/locations
+// @desc    Liste des localisations uniques des produits actifs
+// @access  Public
+router.get('/locations', productController.getLocations);
+
 // @route   POST /api/products
 // @desc    Créer une nouvelle annonce
 // @access  Private

@@ -190,7 +190,7 @@ productSchema.methods.toItemJSON = async function() {
     type: this.type,
     rating: this.rating,
     totalReviews: this.totalReviews,
-    seller: this.seller.toSellerJSON ? this.seller.toSellerJSON() : {
+    seller: this.seller.toSellerJSON ? await this.seller.toSellerJSON() : {
       id: this.seller._id.toString(),
       name: this.seller.name,
       avatar: this.seller.avatar

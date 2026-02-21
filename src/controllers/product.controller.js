@@ -28,11 +28,29 @@ exports.createProduct = async (req, res) => {
     } = req.body;
 
     // ✅ Validation des champs obligatoires
-    if (!title || !description || !category || !price || !location) {
+    if (!title || !description || !category || !price) {
       return res.status(400).json({
         success: false,
-        message: 'Champs obligatoires manquants : title, description, category, price, location'
+        message: 'Champs obligatoires manquants : title, description, category, price'
       });
+    }
+
+    // 📍 Si pas de localisation fournie, utiliser celle du profil du vendeur
+    const User = require('../models/User');
+    const seller = await User.findById(req.user.id);
+    let productLocation = location || seller.location;
+
+    if (!productLocation) {
+      return res.status(400).json({
+        success: false,
+        message: 'La localisation est requise. Veuillez mettre à jour votre profil.'
+      });
+    }
+
+    // ✅ Normaliser le format de localisation pour garantir "Ville, Pays"
+    // Si la localisation ne contient pas de virgule, ajouter ", Niger" par défaut
+    if (!productLocation.includes(',')) {
+      productLocation = `${productLocation}, Niger`;
     }
 
     // 📸 Validation des images
@@ -71,7 +89,7 @@ exports.createProduct = async (req, res) => {
       subcategory: subcategory || '',
       type: type || 'product',
       price,
-      location,
+      location: productLocation,
       condition: condition || 'used',
       quantity: quantity || '1',
       images: uploadedImages,
@@ -131,19 +149,90 @@ exports.getProducts = async (req, res) => {
       sort = '-createdAt' // Par défaut : plus récents
     } = req.query;
 
-    // 🔍 Construction des filtres
+    // 🔍 Filtrage par localisation : chercher dans product.location OU seller.location
+    // Utilisation d'agrégation MongoDB pour filtrer par localisation du vendeur
+    if (location) {
+      const User = require('../models/User');
+      const locationRegex = new RegExp(location, 'i');
+      
+      // Étape 1: Trouver les IDs des vendeurs dans cette localisation
+      const sellersInLocation = await User.find(
+        { location: locationRegex },
+        { _id: 1 }
+      );
+      const sellerIds = sellersInLocation.map(s => s._id);
+      
+      // Étape 2: Construire les filtres de base
+      const filter = { status };
+      if (category) filter.category = category;
+      if (subcategory) filter.subcategory = subcategory;
+      if (type) filter.type = type;
+      if (condition) filter.condition = condition;
+      if (seller) filter.seller = seller;
+      
+      // Étape 3: Filtrer par produits avec location OU vendeurs dans cette localisation
+      filter.$or = [
+        { location: locationRegex },
+        { seller: { $in: sellerIds } }
+      ];
+      
+      // 🔎 Recherche par texte (titre + description) - regex pour correspondances partielles
+      if (search) {
+        const searchRegex = new RegExp(search, 'i');
+        filter.$and = filter.$and || [];
+        filter.$and.push({
+          $or: [
+            { title: searchRegex },
+            { description: searchRegex }
+          ]
+        });
+      }
+      
+      // 📊 Exécuter la requête avec filtre de localisation
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+      
+      const [products, total] = await Promise.all([
+        Product.find(filter)
+          .populate('seller', 'name avatar phone email whatsapp businessType businessName rating totalSales location')
+          .sort(sort)
+          .skip(skip)
+          .limit(parseInt(limit)),
+        Product.countDocuments(filter)
+      ]);
+      
+      // 🔄 Transformer en format Item
+      const productsJSON = await Promise.all(
+        products.map(product => product.toItemJSON())
+      );
+
+      return res.status(200).json({
+        success: true,
+        data: productsJSON,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          pages: Math.ceil(total / parseInt(limit))
+        }
+      });
+    }
+    
+    // 🔍 Si pas de filtre localisation, utiliser le filtre classique
     const filter = { status };
 
     if (category) filter.category = category;
     if (subcategory) filter.subcategory = subcategory;
     if (type) filter.type = type;
     if (condition) filter.condition = condition;
-    if (location) filter.location = new RegExp(location, 'i');
     if (seller) filter.seller = seller;
 
-    // 🔎 Recherche par texte (titre + description)
+    // 🔎 Recherche par texte (titre + description) - regex pour correspondances partielles
     if (search) {
-      filter.$text = { $search: search };
+      const searchRegex = new RegExp(search, 'i');
+      filter.$or = [
+        { title: searchRegex },
+        { description: searchRegex }
+      ];
     }
 
     // 💰 Filtrage par prix (conversion string → number)
@@ -208,8 +297,21 @@ exports.getProductById = async (req, res) => {
       });
     }
 
-    // 📈 Incrémenter les vues
-    await product.incrementViews();
+    // � Vérifier si le produit est actif
+    // Si l'utilisateur n'est pas le vendeur et que le produit n'est pas actif, refuser l'accès
+    const isOwner = req.user && product.seller._id.toString() === req.user.id;
+    
+    if (!isOwner && product.status !== 'active') {
+      return res.status(404).json({
+        success: false,
+        message: 'Cette annonce n\'est plus disponible'
+      });
+    }
+
+    // 📈 Incrémenter les vues (seulement si actif ou si propriétaire)
+    if (product.status === 'active' || isOwner) {
+      await product.incrementViews();
+    }
 
     // 🔄 Transformer en format Item
     const productJSON = await product.toItemJSON();
@@ -310,7 +412,14 @@ exports.updateProduct = async (req, res) => {
     if (subcategory !== undefined) product.subcategory = subcategory;
     if (type) product.type = type;
     if (price) product.price = price;
-    if (location) product.location = location;
+    if (location) {
+      // ✅ Normaliser le format de localisation pour garantir "Ville, Pays"
+      let normalizedLocation = location;
+      if (!normalizedLocation.includes(',')) {
+        normalizedLocation = `${normalizedLocation}, Niger`;
+      }
+      product.location = normalizedLocation;
+    }
     if (condition) product.condition = condition;
     if (quantity) product.quantity = quantity;
     if (delivery !== undefined) product.delivery = delivery;
@@ -407,7 +516,7 @@ exports.getMyProducts = async (req, res) => {
   try {
     const { status, page = 1, limit = 20 } = req.query;
 
-    const filter = { seller: req.user.id };
+    const filter = { seller: req.user._id };
     if (status) filter.status = status;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -570,8 +679,8 @@ exports.getMyStats = async (req, res) => {
       totalViews,
       totalFavorites
     ] = await Promise.all([
-      Product.countDocuments({ seller: req.user.id, status: 'active' }),
-      Product.countDocuments({ seller: req.user.id, status: 'sold' }),
+      Product.countDocuments({ seller: req.user._id, status: 'active' }),
+      Product.countDocuments({ seller: req.user._id, status: 'sold' }),
       Product.aggregate([
         { $match: { seller: req.user._id } },
         { $group: { _id: null, total: { $sum: '$views' } } }
@@ -597,6 +706,59 @@ exports.getMyStats = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Erreur lors de la récupération des statistiques',
+      error: error.message
+    });
+  }
+};
+
+// ===============================================
+// 📍 OBTENIR LES LOCALISATIONS
+// ===============================================
+// @desc    Obtenir les localisations uniques où il y a des produits actifs
+// @route   GET /api/products/locations
+// @access  Public
+exports.getLocations = async (req, res) => {
+  try {
+    // 📍 Récupérer les localisations des produits actifs
+    const productLocations = await Product.distinct('location', { status: 'active' });
+    
+    // 👥 Récupérer les localisations des vendeurs qui ont des produits actifs
+    const sellersWithProducts = await Product.aggregate([
+      { $match: { status: 'active' } },
+      { $group: { _id: '$seller' } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'sellerInfo'
+        }
+      },
+      { $unwind: '$sellerInfo' },
+      { $match: { 'sellerInfo.location': { $exists: true, $ne: '' } } },
+      { $group: { _id: '$sellerInfo.location' } }
+    ]);
+    
+    const sellerLocations = sellersWithProducts.map(item => item._id);
+    
+    // 🔗 Combiner et dédupliquer les localisations
+    const allLocations = [...new Set([...productLocations, ...sellerLocations])];
+    
+    // 📊 Trier alphabétiquement et filtrer les valeurs vides
+    const sortedLocations = allLocations
+      .filter(loc => loc && loc.trim() !== '')
+      .sort((a, b) => a.localeCompare(b, 'fr'));
+
+    res.status(200).json({
+      success: true,
+      data: sortedLocations
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur récupération localisations:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des localisations',
       error: error.message
     });
   }

@@ -44,11 +44,19 @@ exports.register = async (req, res) => {
     } = req.body;
 
     // ✅ Validation des champs obligatoires
-    if (!name || !phone || !password || !businessName || !location) {
+    if (!name || !phone || !password || !location) {
       return res.status(400).json({
         success: false,
         message: 'Champs obligatoires manquants',
-        required: ['name', 'phone', 'password', 'businessName', 'location']
+        required: ['name', 'phone', 'password', 'location']
+      });
+    }
+    
+    // ✅ Validation conditionnelle : businessName requis pour les professionnels
+    if (businessType === 'professional' && !businessName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le nom de l\'activité est obligatoire pour un compte professionnel'
       });
     }
 
@@ -79,12 +87,15 @@ exports.register = async (req, res) => {
         avatarUrl = await uploadImage(avatar, 'kowa/avatars', `user_${phone.replace(/\s+/g, '')}`);
       }
       
+      // ✅ Définir businessName par défaut pour les comptes individuels
+      const finalBusinessName = businessName || (businessType === 'individual' ? name : '');
+      
       // ✅ Mettre à jour l'utilisateur temporaire avec les vraies données
       existingUser.name = name;
       existingUser.password = password;  // Sera hashé par le pre-save hook
       existingUser.email = email || undefined;
       existingUser.businessType = businessType || 'individual';
-      existingUser.businessName = businessName;
+      existingUser.businessName = finalBusinessName;
       existingUser.description = description || '';
       existingUser.location = location;
       existingUser.avatar = avatarUrl;
@@ -151,6 +162,9 @@ exports.register = async (req, res) => {
     if (avatar) {
       avatarUrl = await uploadImage(avatar, 'kowa/avatars', `user_${phone.replace(/\s+/g, '')}`);
     }
+    
+    // ✅ Définir businessName par défaut pour les comptes individuels
+    const finalBusinessName = businessName || (businessType === 'individual' ? name : '');
 
     // ✅ Créer l'utilisateur
     const user = await User.create({
@@ -159,7 +173,7 @@ exports.register = async (req, res) => {
       email: email || undefined,
       password,  // Sera hashé par le pre-save hook
       businessType: businessType || 'individual',
-      businessName,
+      businessName: finalBusinessName,
       description: description || '',
       location,
       avatar: avatarUrl,
@@ -437,7 +451,7 @@ exports.getMe = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        user: user.toSellerJSON()  // Format frontend Seller
+        user: await user.toSellerJSON()  // Format frontend Seller
       }
     });
 
@@ -691,6 +705,15 @@ exports.sendOTP = async (req, res) => {
       });
     }
 
+    // Validation du format du numéro de téléphone
+    const phoneRegex = /^\+\d{1,4}\s\d{6,}$/;
+    if (!phoneRegex.test(phone.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Format de numéro de téléphone invalide. Exemple: +227 12345678'
+      });
+    }
+
     // 🔍 Chercher si un utilisateur avec ce numéro existe
     let user = await User.findOne({ phone });
     
@@ -875,6 +898,38 @@ exports.verifyOTP = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Erreur lors de la vérification du code'
+    });
+  }
+};
+
+// ===============================================
+// 👤 PROFIL PUBLIC VENDEUR
+// ===============================================
+// @desc    Obtenir le profil public d'un vendeur
+// @route   GET /api/auth/seller/:id
+// @access  Public
+exports.getSellerProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vendeur introuvable'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: await user.toSellerJSON()
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur récupération profil vendeur:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération du profil',
+      error: error.message
     });
   }
 };

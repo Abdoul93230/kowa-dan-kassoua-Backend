@@ -47,6 +47,11 @@ router.post('/send-otp', authController.sendOTP);
 // @access  Public
 router.post('/verify-otp', authController.verifyOTP);
 
+// @route   GET /api/auth/seller/:id
+// @desc    Obtenir le profil public d'un vendeur
+// @access  Public
+router.get('/seller/:id', authController.getSellerProfile);
+
 // ===============================================
 // 🔐 ROUTES PROTÉGÉES
 // ===============================================

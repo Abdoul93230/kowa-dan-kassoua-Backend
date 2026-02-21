@@ -45,8 +45,8 @@ const userSchema = new mongoose.Schema({
   },
   businessName: {
     type: String,
-    required: [true, 'Le nom de l\'entreprise/activité est obligatoire'],
-    trim: true
+    trim: true,
+    default: ''
   },
   description: {
     type: String,
@@ -151,6 +151,13 @@ const userSchema = new mongoose.Schema({
 
 // 🔐 Hash password avant sauvegarde
 userSchema.pre('save', async function(next) {
+  // Validation conditionnelle : businessName requis pour les professionnels
+  if (this.businessType === 'professional' && !this.businessName) {
+    const error = new Error('Le nom de l\'activité est obligatoire pour un compte professionnel');
+    return next(error);
+  }
+  
+  // Hash password si modifié
   if (!this.isModified('password')) return next();
   
   const salt = await bcrypt.genSalt(10);
@@ -172,7 +179,14 @@ userSchema.virtual('memberSince').get(function() {
 });
 
 // 📦 Transformer pour retourner format Seller du frontend
-userSchema.methods.toSellerJSON = function() {
+userSchema.methods.toSellerJSON = async function() {
+  // Compter dynamiquement les annonces actives du vendeur
+  const Product = require('./Product');
+  const totalListings = await Product.countDocuments({ 
+    seller: this._id, 
+    status: 'active' 
+  });
+
   return {
     id: this._id.toString(),
     name: this.name,
@@ -193,7 +207,7 @@ userSchema.methods.toSellerJSON = function() {
       facebook: this.contactInfo.facebook,
       instagram: this.contactInfo.instagram
     },
-    totalListings: this.sellerStats.totalListings,
+    totalListings: totalListings,
     categories: this.sellerStats.categories
   };
 };
