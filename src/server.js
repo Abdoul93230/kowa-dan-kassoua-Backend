@@ -47,10 +47,11 @@ app.set('io', io);
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/products', require('./routes/product.routes'));
 app.use('/api/favorites', require('./routes/favorite.routes'));
+app.use('/api/conversations', require('./routes/conversation.routes'));
+app.use('/api/messages', require('./routes/message.routes'));
 // TODO: Créer les autres routes
 // app.use('/api/users', require('./routes/user.routes'));
 // app.use('/api/orders', require('./routes/order.routes'));
-// app.use('/api/messages', require('./routes/message.routes'));
 // app.use('/api/reviews', require('./routes/review.routes'));
 
 // Health check
@@ -73,28 +74,18 @@ app.use((req, res) => {
 // Error handler middleware
 app.use(errorHandler);
 
-// Socket.io connection
-io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+// Configure Socket.io handlers
+const setupSocketHandlers = require('./socket/messageHandler');
+const socketUtils = setupSocketHandlers(io);
 
-  socket.on('join_room', (roomId) => {
-    socket.join(roomId);
-    console.log(`User ${socket.id} joined room ${roomId}`);
-  });
-
-  socket.on('send_message', (data) => {
-    io.to(data.roomId).emit('receive_message', data);
-  });
-
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-  });
-});
+// Make socket utils available globally (optional)
+app.set('socketUtils', socketUtils);
 
 // Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+  console.log(`📡 Socket.IO ready for messaging`);
 });
 
 // Handle unhandled promise rejections

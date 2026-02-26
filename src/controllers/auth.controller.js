@@ -197,7 +197,7 @@ exports.register = async (req, res) => {
       message: 'Inscription réussie',
       data: {
         user: {
-          id: user._id,
+          id: user._id.toString(),
           name: user.name,
           phone: user.phone,
           email: user.email,
@@ -328,7 +328,7 @@ exports.login = async (req, res) => {
       message: 'Connexion réussie',
       data: {
         user: {
-          id: user._id,
+          id: user._id.toString(),
           name: user.name,
           phone: user.phone,
           email: user.email,

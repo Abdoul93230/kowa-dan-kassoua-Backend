@@ -39,7 +39,7 @@ const conversationSchema = new mongoose.Schema({
     read: Boolean,
     type: {
       type: String,
-      enum: ['text', 'image', 'offer'],
+      enum: ['text', 'image', 'audio', 'offer'],
       default: 'text'
     }
   },
@@ -87,7 +87,7 @@ conversationSchema.methods.toConversationJSON = async function(userId) {
         avatar: this.participants.buyer.avatar
       },
       seller: this.participants.seller.toSellerJSON 
-        ? this.participants.seller.toSellerJSON() 
+        ? this.participants.seller.toSellerJSON(this.participants.seller.totalListings || 0) 
         : {
             id: this.participants.seller._id.toString(),
             name: this.participants.seller.name,
@@ -102,8 +102,8 @@ conversationSchema.methods.toConversationJSON = async function(userId) {
     } : null,
     lastMessage: this.lastMessage,
     unreadCount: unread,
-    createdAt: this.createdAt.toISOString(),
-    updatedAt: this.updatedAt.toISOString(),
+    createdAt: this.createdAt ? this.createdAt.toISOString() : new Date().toISOString(),
+    updatedAt: this.updatedAt ? this.updatedAt.toISOString() : new Date().toISOString(),
     status: this.status
   };
 };

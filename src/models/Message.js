@@ -26,8 +26,11 @@ const messageSchema = new mongoose.Schema({
   // 📝 Contenu
   content: {
     type: String,
-    required: [true, 'Le contenu est obligatoire'],
-    maxlength: 2000
+    maxlength: 2000,
+    // Content est optionnel pour les messages audio
+    required: function() {
+      return this.type !== 'audio';
+    }
   },
   
   // 📅 Horodatage
@@ -49,7 +52,7 @@ const messageSchema = new mongoose.Schema({
   // 🎯 Type de message
   type: {
     type: String,
-    enum: ['text', 'image', 'offer'],
+    enum: ['text', 'image', 'audio', 'offer'],
     default: 'text'
   },
   

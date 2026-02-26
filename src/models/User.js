@@ -172,21 +172,15 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
 
 // 📅 Virtual pour "memberSince" (format lisible)
 userSchema.virtual('memberSince').get(function() {
+  if (!this.createdAt) return 'Récemment';
   return this.createdAt.toLocaleDateString('fr-FR', { 
     month: 'long', 
     year: 'numeric' 
   });
 });
 
-// 📦 Transformer pour retourner format Seller du frontend
-userSchema.methods.toSellerJSON = async function() {
-  // Compter dynamiquement les annonces actives du vendeur
-  const Product = require('./Product');
-  const totalListings = await Product.countDocuments({ 
-    seller: this._id, 
-    status: 'active' 
-  });
-
+// 📦 Transformer pour retourner format Seller du frontend (version synchrone pour éviter await dans toConversationJSON)
+userSchema.methods.toSellerJSON = function(totalListings = 0) {
   return {
     id: this._id.toString(),
     name: this.name,
