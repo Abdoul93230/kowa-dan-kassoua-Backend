@@ -64,6 +64,11 @@ const setupSocketHandlers = (io) => {
     }
     connectedUsers.get(userId).add(socket.id);
 
+    // Envoyer la liste des utilisateurs actuellement en ligne au client qui vient de se connecter
+    const onlineUserIds = Array.from(connectedUsers.keys()).filter(id => id !== userId);
+    socket.emit('users:online', { userIds: onlineUserIds });
+    console.log('📋 Liste utilisateurs en ligne envoyée à', userId, ':', onlineUserIds.length, 'utilisateurs');
+
     // Informer les autres que cet utilisateur est en ligne
     socket.broadcast.emit('user:online', { userId });
 

@@ -698,7 +698,10 @@ exports.sendOTP = async (req, res) => {
   try {
     const { phone } = req.body;
 
+    console.log('📱 Demande OTP reçue:', { phone, body: req.body });
+
     if (!phone) {
+      console.log('❌ Téléphone manquant');
       return res.status(400).json({
         success: false,
         message: 'Le numéro de téléphone est requis'
@@ -707,7 +710,16 @@ exports.sendOTP = async (req, res) => {
 
     // Validation du format du numéro de téléphone
     const phoneRegex = /^\+\d{1,4}\s\d{6,}$/;
-    if (!phoneRegex.test(phone.trim())) {
+    const trimmedPhone = phone.trim();
+    
+    console.log('🔍 Validation téléphone:', { 
+      phone, 
+      trimmedPhone, 
+      matches: phoneRegex.test(trimmedPhone) 
+    });
+    
+    if (!phoneRegex.test(trimmedPhone)) {
+      console.log('❌ Format téléphone invalide');
       return res.status(400).json({
         success: false,
         message: 'Format de numéro de téléphone invalide. Exemple: +227 12345678'
