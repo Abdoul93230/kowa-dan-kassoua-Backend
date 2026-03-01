@@ -361,7 +361,7 @@ exports.getProducts = async (req, res) => {
 exports.getProductById = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id)
-      .populate('seller', 'name avatar phone email whatsapp businessType businessName description location rating totalSales memberSince');
+      .populate('seller', '_id name avatar phone email whatsapp businessType businessName description location rating totalSales memberSince sellerStats contactInfo verified');
 
     if (!product) {
       return res.status(404).json({
@@ -372,7 +372,7 @@ exports.getProductById = async (req, res) => {
 
     // � Vérifier si le produit est actif
     // Si l'utilisateur n'est pas le vendeur et que le produit n'est pas actif, refuser l'accès
-    const isOwner = req.user && product.seller._id.toString() === req.user.id;
+    const isOwner = req.user && product.seller && product.seller._id.toString() === req.user.id;
     
     if (!isOwner && product.status !== 'active') {
       return res.status(404).json({
