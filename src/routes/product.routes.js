@@ -12,6 +12,16 @@ const { protect } = require('../middleware/auth');
 // @access  Public
 router.get('/', productController.getProducts);
 
+// @route   GET /api/products/platform/stats
+// @desc    Statistiques globales de la plateforme
+// @access  Public
+router.get('/platform/stats', productController.getPlatformStats);
+
+// @route   GET /api/products/active-sellers
+// @desc    Liste des vendeurs actifs
+// @access  Public
+router.get('/active-sellers', productController.getActiveSellers);
+
 // ===============================================
 // 🔒 ROUTES PROTÉGÉES (authentification requise)
 // ===============================================

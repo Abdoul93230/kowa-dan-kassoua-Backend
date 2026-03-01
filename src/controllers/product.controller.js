@@ -845,3 +845,131 @@ exports.getLocations = async (req, res) => {
     });
   }
 };
+
+// ===============================================
+// 📊 STATISTIQUES GLOBALES DE LA PLATEFORME
+// ===============================================
+// @desc    Statistiques globales (annonces, membres, villes)
+// @route   GET /api/products/platform/stats
+// @access  Public
+exports.getPlatformStats = async (req, res) => {
+  try {
+    const User = require('../models/User');
+
+    // Compter les annonces actives
+    const totalProducts = await Product.countDocuments({ status: 'active' });
+    
+    // Compter les utilisateurs actifs
+    const totalUsers = await User.countDocuments({ isActive: true });
+    
+    // Compter les villes uniques (depuis products + users)
+    const productLocations = await Product.distinct('location', { status: 'active' });
+    const userLocations = await User.distinct('location', { isActive: true });
+    
+    // Extraire les villes (avant la virgule) et dédupliquer
+    const extractCity = (location) => {
+      if (!location) return null;
+      const city = location.split(',')[0].trim();
+      return city;
+    };
+    
+    const allCities = [
+      ...productLocations.map(extractCity),
+      ...userLocations.map(extractCity)
+    ].filter(city => city && city !== '');
+    
+    const uniqueCities = [...new Set(allCities)];
+    const totalCities = uniqueCities.length;
+
+    // Compter produits vs services
+    const totalProductType = await Product.countDocuments({ status: 'active', type: 'product' });
+    const totalServiceType = await Product.countDocuments({ status: 'active', type: 'service' });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalProducts,
+        totalUsers,
+        totalCities,
+        productsByType: {
+          products: totalProductType,
+          services: totalServiceType
+        },
+        topCities: uniqueCities.slice(0, 10) // Top 10 villes
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur récupération stats plateforme:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des statistiques',
+      error: error.message
+    });
+  }
+};
+
+// ===============================================
+// 👥 VENDEURS ACTIFS
+// ===============================================
+// @desc    Liste des vendeurs avec annonces actives
+// @route   GET /api/products/active-sellers
+// @access  Public
+exports.getActiveSellers = async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+
+    // Agréger les vendeurs avec leurs stats
+    const activeSellers = await Product.aggregate([
+      { $match: { status: 'active' } },
+      {
+        $group: {
+          _id: '$seller',
+          productCount: { $sum: 1 },
+          lastActivity: { $max: '$createdAt' }
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'sellerInfo'
+        }
+      },
+      { $unwind: '$sellerInfo' },
+      {
+        $project: {
+          _id: '$sellerInfo._id',
+          name: '$sellerInfo.name',
+          avatar: '$sellerInfo.avatar',
+          location: '$sellerInfo.location',
+          businessType: '$sellerInfo.businessType',
+          businessName: '$sellerInfo.businessName',
+          rating: '$sellerInfo.sellerStats.rating',
+          productCount: 1,
+          lastActivity: 1,
+          // Considérer comme "en ligne" si activité dans les dernières 24h
+          isOnline: {
+            $gte: ['$lastActivity', new Date(Date.now() - 24 * 60 * 60 * 1000)]
+          }
+        }
+      },
+      { $sort: { isOnline: -1, productCount: -1, lastActivity: -1 } },
+      { $limit: parseInt(limit) }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: activeSellers
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur récupération vendeurs actifs:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des vendeurs actifs',
+      error: error.message
+    });
+  }
+};
