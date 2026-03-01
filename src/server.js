@@ -46,13 +46,14 @@ app.set('io', io);
 // Routes
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/products', require('./routes/product.routes'));
+app.use('/api/categories', require('./routes/category.routes'));
 app.use('/api/favorites', require('./routes/favorite.routes'));
 app.use('/api/conversations', require('./routes/conversation.routes'));
 app.use('/api/messages', require('./routes/message.routes'));
+app.use('/api/reviews', require('./routes/review.routes'));
 // TODO: Créer les autres routes
 // app.use('/api/users', require('./routes/user.routes'));
 // app.use('/api/orders', require('./routes/order.routes'));
-// app.use('/api/reviews', require('./routes/review.routes'));
 
 // Health check
 app.get('/health', (req, res) => {

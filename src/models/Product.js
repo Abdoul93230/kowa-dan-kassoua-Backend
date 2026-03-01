@@ -23,24 +23,26 @@ const productSchema = new mongoose.Schema({
   
   // 🏷️ Catégorisation
   category: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
+    required: [true, 'La catégorie est obligatoire']
+  },
+  // Slug de la catégorie (pour compatibilité et requêtes rapides)
+  categorySlug: {
     type: String,
-    required: [true, 'La catégorie est obligatoire'],
-    enum: [
-      'vehicules',
-      'immobilier',
-      'electronique',
-      'maison',
-      'emploi',
-      'services',
-      'mode',
-      'loisirs',
-      'materiaux',
-      'autres'
-    ]
+    trim: true,
+    lowercase: true,
+    index: true
   },
   subcategory: {
     type: String,
     trim: true
+  },
+  // Slug de la sous-catégorie (pour requêtes rapides)
+  subcategorySlug: {
+    type: String,
+    trim: true,
+    lowercase: true
   },
   
   // 🎯 Type (produit ou service)
@@ -185,7 +187,8 @@ productSchema.methods.toItemJSON = async function() {
     location: this.location,
     images: this.images,
     mainImage: this.mainImage,
-    category: this.category,
+    category: this.categorySlug || this.category, // Retourner le slug pour compatibilité
+    categoryId: this.category, // ObjectId pour les cas où nécessaire
     subcategory: this.subcategory,
     type: this.type,
     rating: this.rating,
@@ -216,6 +219,7 @@ productSchema.methods.toItemJSON = async function() {
 // 🔍 Index pour recherche et performance
 productSchema.index({ seller: 1, status: 1 });
 productSchema.index({ category: 1, status: 1 });
+productSchema.index({ categorySlug: 1, status: 1 }); // Index pour recherche par slug
 productSchema.index({ status: 1, createdAt: -1 });
 productSchema.index({ promoted: 1, featured: 1 });
 productSchema.index({ title: 'text', description: 'text' });

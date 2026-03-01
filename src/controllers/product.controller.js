@@ -1,5 +1,45 @@
 const Product = require('../models/Product');
+const Category = require('../models/Category');
 const { uploadMultipleImages, deleteImage } = require('../utils/uploadImage');
+
+// ===============================================
+// 🔄 FONCTIONS UTILITAIRES POUR LES STATS
+// ===============================================
+
+/**
+ * Mettre à jour les statistiques d'une catégorie
+ * @param {ObjectId} categoryId - ID de la catégorie
+ */
+const updateCategoryStats = async (categoryId) => {
+  try {
+    if (!categoryId) return;
+    
+    const category = await Category.findById(categoryId);
+    if (!category) return;
+    
+    // Compter les produits et services actifs
+    const productsCount = await Product.countDocuments({
+      category: categoryId,
+      type: 'product',
+      status: 'active'
+    });
+    
+    const servicesCount = await Product.countDocuments({
+      category: categoryId,
+      type: 'service',
+      status: 'active'
+    });
+    
+    // Mettre à jour les stats
+    category.productsCount = productsCount;
+    category.servicesCount = servicesCount;
+    await category.save();
+    
+    console.log(`📊 Stats catégorie "${category.name}" mises à jour: ${productsCount} produits, ${servicesCount} services`);
+  } catch (error) {
+    console.error('❌ Erreur mise à jour stats catégorie:', error);
+  }
+};
 
 // ===============================================
 // ➕ CRÉER UN PRODUIT/SERVICE
@@ -80,13 +120,25 @@ exports.createProduct = async (req, res) => {
 
     console.log('✅ Images uploadées:', uploadedImages.length);
 
+    // � Récupérer le slug de la catégorie
+    const Category = require('../models/Category');
+    const categoryDoc = await Category.findById(category);
+    if (!categoryDoc) {
+      return res.status(400).json({
+        success: false,
+        message: 'Catégorie invalide'
+      });
+    }
+
     // 📦 Créer le produit
     const product = await Product.create({
       seller: req.user.id,
       title,
       description,
       category,
+      categorySlug: categoryDoc.slug,
       subcategory: subcategory || '',
+      subcategorySlug: subcategory ? subcategory.toLowerCase().replace(/\s+/g, '-') : '',
       type: type || 'product',
       price,
       location: productLocation,
@@ -105,7 +157,10 @@ exports.createProduct = async (req, res) => {
 
     console.log('✅ Produit créé avec succès:', product._id);
 
-    // 🔄 Populer le vendeur et retourner au format Item
+    // � Mettre à jour les statistiques de la catégorie
+    await updateCategoryStats(product.category);
+
+    // �🔄 Populer le vendeur et retourner au format Item
     await product.populate('seller');
     const productJSON = await product.toItemJSON();
 
@@ -137,6 +192,7 @@ exports.getProducts = async (req, res) => {
       page = 1,
       limit = 20,
       category,
+      categorySlug,
       subcategory,
       type,
       condition,
@@ -148,6 +204,23 @@ exports.getProducts = async (req, res) => {
       status = 'active',
       sort = '-createdAt' // Par défaut : plus récents
     } = req.query;
+
+    // 🔍 Gestion de la catégorie : accepter slug ou ObjectId
+    let categoryFilter = null;
+    if (categorySlug) {
+      // Si categorySlug fourni, filtrer par slug
+      categoryFilter = { categorySlug };
+    } else if (category) {
+      // Si category fourni, vérifier si c'est un ObjectId ou un slug
+      const mongoose = require('mongoose');
+      if (mongoose.Types.ObjectId.isValid(category) && /^[0-9a-fA-F]{24}$/.test(category)) {
+        // C'est un ObjectId
+        categoryFilter = { category };
+      } else {
+        // C'est un slug
+        categoryFilter = { categorySlug: category };
+      }
+    }
 
     // 🔍 Filtrage par localisation : chercher dans product.location OU seller.location
     // Utilisation d'agrégation MongoDB pour filtrer par localisation du vendeur
@@ -164,7 +237,7 @@ exports.getProducts = async (req, res) => {
       
       // Étape 2: Construire les filtres de base
       const filter = { status };
-      if (category) filter.category = category;
+      if (categoryFilter) Object.assign(filter, categoryFilter);
       if (subcategory) filter.subcategory = subcategory;
       if (type) filter.type = type;
       if (condition) filter.condition = condition;
@@ -220,7 +293,7 @@ exports.getProducts = async (req, res) => {
     // 🔍 Si pas de filtre localisation, utiliser le filtre classique
     const filter = { status };
 
-    if (category) filter.category = category;
+    if (categoryFilter) Object.assign(filter, categoryFilter);
     if (subcategory) filter.subcategory = subcategory;
     if (type) filter.type = type;
     if (condition) filter.condition = condition;
@@ -488,8 +561,14 @@ exports.deleteProduct = async (req, res) => {
       }
     }
 
+    // Sauvegarder la catégorie avant suppression pour mettre à jour les stats
+    const categoryId = product.category;
+
     // 🗑️ Supprimer le produit
     await product.deleteOne();
+
+    // 📊 Mettre à jour les statistiques de la catégorie
+    await updateCategoryStats(categoryId);
 
     res.status(200).json({
       success: true,
@@ -646,6 +725,9 @@ exports.toggleStatus = async (req, res) => {
 
     await product.save();
     await product.populate('seller', 'name avatar phone email whatsapp businessType businessName rating totalSales location');
+
+    // 📊 Mettre à jour les statistiques de la catégorie
+    await updateCategoryStats(product.category);
 
     const productJSON = await product.toItemJSON();
 
