@@ -203,6 +203,7 @@ productSchema.methods.toItemJSON = async function() {
     featured: this.featured,
     postedTime: this.postedTime,
     postedDate: this.postedDate,
+    createdAt: this.createdAt,
     description: this.description,
     condition: this.condition,
     quantity: this.quantity,

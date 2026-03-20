@@ -27,6 +27,28 @@ exports.getConversations = async (req, res) => {
       .populate('item.id', 'title mainImage price status')
       .sort({ updatedAt: -1 });
 
+    // Resynchroniser l'etat de lecture du dernier message avec la source de verite (collection Message).
+    const lastMessageIds = conversations
+      .map((conv) => conv?.lastMessage?.id)
+      .filter(Boolean)
+      .map((id) => id.toString());
+
+    let readByMessageId = new Map();
+    if (lastMessageIds.length > 0) {
+      const lastMessages = await Message.find({ _id: { $in: lastMessageIds } })
+        .select('_id read');
+
+      readByMessageId = new Map(
+        lastMessages.map((msg) => [msg._id.toString(), Boolean(msg.read)])
+      );
+    }
+
+    conversations.forEach((conv) => {
+      const lastId = conv?.lastMessage?.id ? conv.lastMessage.id.toString() : '';
+      if (!lastId || !readByMessageId.has(lastId)) return;
+      conv.lastMessage.read = readByMessageId.get(lastId);
+    });
+
     console.log(`✅ ${conversations.length} conversation(s) trouvée(s)`);
 
     // Transformer en format frontend
@@ -295,6 +317,16 @@ exports.markConversationAsRead = async (req, res) => {
         $set: { read: true, readAt: new Date() }
       }
     );
+
+    // Garder la conversation synchronisee pour l'affichage liste apres refresh.
+    if (
+      conversation.lastMessage?.id &&
+      conversation.lastMessage?.senderId &&
+      conversation.lastMessage.senderId.toString() !== userId
+    ) {
+      conversation.lastMessage.read = true;
+      await conversation.save();
+    }
 
     // Notifier via Socket.IO du changement du compteur de non-lus
     const io = req.app.get('io');
