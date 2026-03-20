@@ -460,9 +460,47 @@ exports.getMe = async (req, res) => {
       success: false,
       message: 'Erreur lors de la récupération du profil'
     });
-  }
-};
 
+  // ===============================================
+  // 📝 UPDATE PROFIL
+  // ===============================================
+  // @desc    Mettre à jour profil utilisateur (nom, ville)
+  // @route   PUT /api/auth/profile
+  // @access  Private
+  exports.updateProfile = async (req, res) => {
+    try {
+      const { name, city } = req.body;
+      const user = await User.findById(req.user.id);
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'Utilisateur non trouvé'
+        });
+      }
+  }
+      // Mettre à jour les champs
+      if (name) user.name = name.trim();
+      if (city) user.city = city.trim();
+};
+      // Sauvegarder
+      await user.save();
+
+      res.status(200).json({
+        success: true,
+        message: 'Profil mis à jour avec succès',
+        data: {
+          user: await user.toSellerJSON()
+        }
+      });
+    } catch (error) {
+      console.error('❌ Erreur mise à jour profil:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Erreur lors de la mise à jour du profil'
+      });
+    }
+  };
 // ===============================================
 // 🔐 RÉINITIALISATION MOT DE PASSE
 // ===============================================

@@ -66,4 +66,9 @@ router.post('/logout', protect, authController.logout);
 // @access  Private
 router.get('/me', protect, authController.getMe);
 
+// @route   PUT /api/auth/profile
+// @desc    Mettre à jour profil utilisateur (nom, ville)
+// @access  Private
+router.put('/profile', protect, authController.updateProfile);
+
 module.exports = router;
