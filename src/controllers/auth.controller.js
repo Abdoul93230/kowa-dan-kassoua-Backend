@@ -466,12 +466,12 @@ exports.getMe = async (req, res) => {
 // ===============================================
 // 📝 UPDATE PROFIL
 // ===============================================
-// @desc    Mettre à jour profil utilisateur (nom, ville)
+// @desc    Mettre à jour profil utilisateur (nom, ville, avatar)
 // @route   PUT /api/auth/profile
 // @access  Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { name, city } = req.body;
+    const { name, city, avatar } = req.body;
     const user = await User.findById(req.user.id);
 
     if (!user) {
@@ -481,8 +481,18 @@ exports.updateProfile = async (req, res) => {
       });
     }
 
-    if (name) user.name = name.trim();
-    if (city) user.city = city.trim();
+    if (typeof name === 'string' && name.trim()) {
+      user.name = name.trim();
+    }
+
+    // Le schéma User stocke la ville dans "location".
+    if (typeof city === 'string' && city.trim()) {
+      user.location = city.trim();
+    }
+
+    if (typeof avatar === 'string' && avatar.trim()) {
+      user.avatar = avatar.trim();
+    }
 
     await user.save();
 
@@ -490,7 +500,7 @@ exports.updateProfile = async (req, res) => {
       success: true,
       message: 'Profil mis à jour avec succès',
       data: {
-        user: await user.toSellerJSON()
+        user: user.toSellerJSON()
       }
     });
   } catch (error) {

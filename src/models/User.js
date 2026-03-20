@@ -192,6 +192,7 @@ userSchema.methods.toSellerJSON = function(totalListings = 0) {
     responseTime: this.sellerStats.responseTime,
     responseRate: this.sellerStats.responseRate,
     location: this.location,
+    city: this.location,
     bio: this.description,
     contactInfo: {
       phone: this.phone,
