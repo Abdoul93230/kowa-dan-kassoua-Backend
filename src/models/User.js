@@ -191,7 +191,7 @@ userSchema.virtual('memberSince').get(function() {
   });
 });
 
-// 📦 Transformer pour retourner format Seller du frontend (version synchrone pour éviter await dans toConversationJSON)
+// 📦 Transformer pour retourner format Seller du frontend
 userSchema.methods.toSellerJSON = function(totalListings = 0) {
   return {
     id: this._id.toString(),
@@ -216,6 +216,33 @@ userSchema.methods.toSellerJSON = function(totalListings = 0) {
     },
     totalListings: totalListings,
     categories: this.sellerStats.categories
+  };
+};
+
+// 📦 Transformer pour l'authentification et le profil complet (Frontend principal)
+userSchema.methods.toAuthJSON = function() {
+  return {
+    id: this._id.toString(),
+    name: this.name,
+    phone: this.phone,
+    email: this.email,
+    avatar: this.avatar,
+    businessName: this.businessName,
+    businessType: this.businessType,
+    location: this.location,
+    description: this.description, // On garde le nom original du champ pour le front
+    contactInfo: {
+      whatsapp: this.contactInfo?.whatsapp || this.phone,
+      website: this.contactInfo?.website,
+      facebook: this.contactInfo?.facebook,
+      instagram: this.contactInfo?.instagram
+    },
+    role: this.role,
+    verified: this.verified,
+    memberSince: this.memberSince,
+    needsPasswordChange: this.needsPasswordChange || false,
+    isMinimalAccount: this.isMinimalAccount || false,
+    sellerStats: this.sellerStats
   };
 };
 

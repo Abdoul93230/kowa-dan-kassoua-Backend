@@ -196,19 +196,7 @@ exports.register = async (req, res) => {
       success: true,
       message: 'Inscription réussie',
       data: {
-        user: {
-          id: user._id.toString(),
-          name: user.name,
-          phone: user.phone,
-          email: user.email,
-          avatar: user.avatar,
-          businessName: user.businessName,
-          businessType: user.businessType,
-          location: user.location,
-          role: user.role,
-          verified: user.verified,
-          memberSince: user.memberSince
-        },
+        user: user.toAuthJSON(),
         tokens: {
           accessToken,
           refreshToken
@@ -327,22 +315,7 @@ exports.login = async (req, res) => {
       success: true,
       message: 'Connexion réussie',
       data: {
-        user: {
-          id: user._id.toString(),
-          name: user.name,
-          phone: user.phone,
-          email: user.email,
-          avatar: user.avatar,
-          businessName: user.businessName,
-          businessType: user.businessType,
-          location: user.location,
-          role: user.role,
-          verified: user.verified,
-          sellerStats: user.sellerStats,
-          memberSince: user.memberSince,
-          needsPasswordChange: user.needsPasswordChange || false,
-          isMinimalAccount: user.isMinimalAccount || false
-        },
+        user: user.toAuthJSON(),
         tokens: {
           accessToken,
           refreshToken
@@ -453,7 +426,7 @@ exports.getMe = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        user: await user.toSellerJSON()  // Format frontend Seller
+        user: user.toAuthJSON()
       }
     });
 
@@ -551,11 +524,7 @@ exports.updateProfile = async (req, res) => {
       success: true,
       message: 'Profil mis à jour avec succès',
       data: {
-        user: {
-          ...user.toSellerJSON(),
-          needsPasswordChange: user.needsPasswordChange,
-          isMinimalAccount: user.isMinimalAccount
-        }
+        user: user.toAuthJSON()
       }
     });
   } catch (error) {
@@ -1175,20 +1144,7 @@ exports.quickRegister = async (req, res) => {
       success: true,
       message: 'Compte créé avec succès',
       data: {
-        user: {
-          id: user._id.toString(),
-          name: user.name,
-          phone: user.phone,
-          email: user.email,
-          avatar: user.avatar,
-          businessName: user.businessName,
-          businessType: user.businessType,
-          location: user.location,
-          role: user.role,
-          verified: user.verified,
-          needsPasswordChange: true,
-          isMinimalAccount: true
-        },
+        user: user.toAuthJSON(),
         tokens: {
           accessToken,
           refreshToken
