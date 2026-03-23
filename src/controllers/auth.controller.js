@@ -339,7 +339,9 @@ exports.login = async (req, res) => {
           role: user.role,
           verified: user.verified,
           sellerStats: user.sellerStats,
-          memberSince: user.memberSince
+          memberSince: user.memberSince,
+          needsPasswordChange: user.needsPasswordChange || false,
+          isMinimalAccount: user.isMinimalAccount || false
         },
         tokens: {
           accessToken,
@@ -471,7 +473,7 @@ exports.getMe = async (req, res) => {
 // @access  Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { name, city, avatar } = req.body;
+    const { name, city, avatar, email, description, businessType, businessName, whatsapp } = req.body;
     const user = await User.findById(req.user.id);
 
     if (!user) {
@@ -494,13 +496,66 @@ exports.updateProfile = async (req, res) => {
       user.avatar = avatar.trim();
     }
 
+    // ✉️ Email (vérifier unicité si changé)
+    if (typeof email === 'string') {
+      const trimmedEmail = email.trim().toLowerCase();
+      if (trimmedEmail && trimmedEmail !== (user.email || '')) {
+        const emailExists = await User.findOne({ email: trimmedEmail, _id: { $ne: user._id } });
+        if (emailExists) {
+          return res.status(400).json({
+            success: false,
+            message: 'Cet email est déjà utilisé par un autre compte'
+          });
+        }
+        user.email = trimmedEmail;
+      } else if (!trimmedEmail) {
+        user.email = undefined;
+      }
+    }
+
+    // 📝 Description / Bio
+    if (typeof description === 'string') {
+      user.description = description.trim();
+    }
+
+    // 🏢 Type de compte
+    if (businessType && ['individual', 'professional'].includes(businessType)) {
+      user.businessType = businessType;
+    }
+
+    // 🏢 Nom de l'activité
+    if (typeof businessName === 'string') {
+      if (user.businessType === 'professional' && !businessName.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Le nom de l'activité est obligatoire pour un compte professionnel"
+        });
+      }
+      user.businessName = businessName.trim();
+    }
+
+    // 📱 WhatsApp
+    if (typeof whatsapp === 'string') {
+      if (!user.contactInfo) user.contactInfo = {};
+      user.contactInfo.whatsapp = whatsapp.trim();
+    }
+
+    // Si l'utilisateur complète son profil, désactiver isMinimalAccount
+    if (user.isMinimalAccount && user.location && user.name) {
+      user.isMinimalAccount = false;
+    }
+
     await user.save();
 
     res.status(200).json({
       success: true,
       message: 'Profil mis à jour avec succès',
       data: {
-        user: user.toSellerJSON()
+        user: {
+          ...user.toSellerJSON(),
+          needsPasswordChange: user.needsPasswordChange,
+          isMinimalAccount: user.isMinimalAccount
+        }
       }
     });
   } catch (error) {
@@ -990,6 +1045,241 @@ exports.getSellerProfile = async (req, res) => {
       success: false,
       message: 'Erreur lors de la récupération du profil',
       error: error.message
+    });
+  }
+};
+
+// ===============================================
+// 📱 VÉRIFIER NUMÉRO DE TÉLÉPHONE (Mode 1)
+// ===============================================
+// @desc    Vérifier si un numéro de téléphone est déjà enregistré
+// @route   POST /api/auth/check-phone
+// @access  Public
+exports.checkPhone = async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le numéro de téléphone est requis'
+      });
+    }
+
+    // Chercher un utilisateur actif avec ce numéro
+    const user = await User.findOne({ phone, isActive: true });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        exists: !!user
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur check-phone:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la vérification du numéro'
+    });
+  }
+};
+
+// ===============================================
+// 🚀 INSCRIPTION RAPIDE (Mode 1 — contextuel)
+// ===============================================
+// @desc    Inscription minimale : nom + phone (OTP déjà vérifié)
+// @route   POST /api/auth/quick-register
+// @access  Public
+exports.quickRegister = async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+
+    // ✅ Validation
+    if (!name || !phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nom et numéro de téléphone requis'
+      });
+    }
+
+    if (name.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le nom doit contenir au moins 2 caractères'
+      });
+    }
+
+    // 🔍 Chercher l'utilisateur temporaire (créé par sendOTP)
+    let user = await User.findOne({ phone });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Veuillez d\'abord vérifier votre numéro de téléphone'
+      });
+    }
+
+    // Vérifier si c'est un utilisateur déjà actif
+    if (user.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'Ce numéro de téléphone est déjà enregistré. Veuillez vous connecter.'
+      });
+    }
+
+    // Vérifier que l'OTP a été vérifié
+    if (!user.otp || !user.otp.verified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Veuillez d\'abord vérifier votre numéro de téléphone'
+      });
+    }
+
+    // 🎲 Générer un mot de passe temporaire (8 caractères)
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let tempPassword = '';
+    for (let i = 0; i < 8; i++) {
+      tempPassword += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    console.log(`📱 Mot de passe temporaire pour ${phone}: ${tempPassword}`);
+
+    // ✅ Mettre à jour l'utilisateur temporaire
+    user.name = name.trim();
+    user.password = tempPassword; // Sera hashé par le pre-save hook
+    user.isActive = true;
+    user.verified = true;
+    user.needsPasswordChange = true;
+    user.isMinimalAccount = true;
+    user.location = '';
+    user.businessType = 'individual';
+    user.businessName = name.trim();
+    user.contactInfo = {
+      whatsapp: phone
+    };
+
+    await user.save();
+
+    // 🔑 Générer les tokens
+    const accessToken = generateAccessToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    // TODO: Envoyer le mot de passe temporaire par SMS
+    // await sendSMS(phone, `Votre mot de passe temporaire MarketHub: ${tempPassword}. Changez-le dans votre profil.`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Compte créé avec succès',
+      data: {
+        user: {
+          id: user._id.toString(),
+          name: user.name,
+          phone: user.phone,
+          email: user.email,
+          avatar: user.avatar,
+          businessName: user.businessName,
+          businessType: user.businessType,
+          location: user.location,
+          role: user.role,
+          verified: user.verified,
+          needsPasswordChange: true,
+          isMinimalAccount: true
+        },
+        tokens: {
+          accessToken,
+          refreshToken
+        }
+      },
+      // ⚠️ EN DÉVELOPPEMENT SEULEMENT
+      ...(process.env.NODE_ENV === 'development' && {
+        devTempPassword: tempPassword
+      })
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur quick-register:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de l\'inscription rapide',
+      error: error.message
+    });
+  }
+};
+
+// ===============================================
+// 🔐 CHANGER MOT DE PASSE (authentifié)
+// ===============================================
+// @desc    Changer le mot de passe (avec ou sans ancien mot de passe)
+// @route   PUT /api/auth/change-password
+// @access  Private
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le nouveau mot de passe est requis'
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le mot de passe doit contenir au moins 6 caractères'
+      });
+    }
+
+    const user = await User.findById(req.user.id).select('+password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Utilisateur non trouvé'
+      });
+    }
+
+    // Si l'utilisateur doit changer son mot de passe (compte Mode 1),
+    // on ne demande pas l'ancien mot de passe
+    if (!user.needsPasswordChange) {
+      // Sinon, vérifier l'ancien mot de passe
+      if (!currentPassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'Le mot de passe actuel est requis'
+        });
+      }
+
+      const isValid = await user.comparePassword(currentPassword);
+      if (!isValid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Mot de passe actuel incorrect'
+        });
+      }
+    }
+
+    // ✅ Mettre à jour le mot de passe
+    user.password = newPassword; // Sera hashé par le pre-save hook
+    user.needsPasswordChange = false;
+    await user.save();
+
+    console.log(`✅ Mot de passe changé pour: ${user.phone}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Mot de passe modifié avec succès'
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur change-password:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors du changement de mot de passe'
     });
   }
 };

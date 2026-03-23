@@ -47,6 +47,16 @@ router.post('/send-otp', authController.sendOTP);
 // @access  Public
 router.post('/verify-otp', authController.verifyOTP);
 
+// @route   POST /api/auth/check-phone
+// @desc    Vérifier si un numéro de téléphone existe (Mode 1)
+// @access  Public
+router.post('/check-phone', authController.checkPhone);
+
+// @route   POST /api/auth/quick-register
+// @desc    Inscription rapide contextuelle (Mode 1)
+// @access  Public
+router.post('/quick-register', authController.quickRegister);
+
 // @route   GET /api/auth/seller/:id
 // @desc    Obtenir le profil public d'un vendeur
 // @access  Public
@@ -67,8 +77,13 @@ router.post('/logout', protect, authController.logout);
 router.get('/me', protect, authController.getMe);
 
 // @route   PUT /api/auth/profile
-// @desc    Mettre à jour profil utilisateur (nom, ville)
+// @desc    Mettre à jour profil utilisateur
 // @access  Private
 router.put('/profile', protect, authController.updateProfile);
+
+// @route   PUT /api/auth/change-password
+// @desc    Changer le mot de passe
+// @access  Private
+router.put('/change-password', protect, authController.changePassword);
 
 module.exports = router;

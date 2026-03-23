@@ -54,11 +54,11 @@ const userSchema = new mongoose.Schema({
     default: ''
   },
   
-  // 📍 Localisation (obligatoire à l'inscription)
+  // 📍 Localisation (optionnel — rempli plus tard pour les comptes contextuels)
   location: {
     type: String,
-    required: [true, 'La localisation est obligatoire'],
-    trim: true
+    trim: true,
+    default: ''
   },
   
   // 📞 Contact Info (selon formulaire inscription)
@@ -144,6 +144,18 @@ const userSchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true
+  },
+  
+  // 🔄 Doit changer son mot de passe (comptes créés via Mode 1)
+  needsPasswordChange: {
+    type: Boolean,
+    default: false
+  },
+  
+  // 📱 Compte minimal (créé via inscription contextuelle Mode 1)
+  isMinimalAccount: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true  // createdAt, updatedAt
