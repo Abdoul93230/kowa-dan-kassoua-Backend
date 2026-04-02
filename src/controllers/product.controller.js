@@ -13,28 +13,28 @@ const { uploadMultipleImages, deleteImage } = require('../utils/uploadImage');
 const updateCategoryStats = async (categoryId) => {
   try {
     if (!categoryId) return;
-    
+
     const category = await Category.findById(categoryId);
     if (!category) return;
-    
+
     // Compter les produits et services actifs
     const productsCount = await Product.countDocuments({
       category: categoryId,
       type: 'product',
       status: 'active'
     });
-    
+
     const servicesCount = await Product.countDocuments({
       category: categoryId,
       type: 'service',
       status: 'active'
     });
-    
+
     // Mettre à jour les stats
     category.productsCount = productsCount;
     category.servicesCount = servicesCount;
     await category.save();
-    
+
     console.log(`📊 Stats catégorie "${category.name}" mises à jour: ${productsCount} produits, ${servicesCount} services`);
   } catch (error) {
     console.error('❌ Erreur mise à jour stats catégorie:', error);
@@ -68,10 +68,10 @@ exports.createProduct = async (req, res) => {
     } = req.body;
 
     // ✅ Validation des champs obligatoires
-    if (!title || !description || !category || !price) {
+    if (!title || !category || !price) {
       return res.status(400).json({
         success: false,
-        message: 'Champs obligatoires manquants : title, description, category, price'
+        message: 'Champs obligatoires manquants : title, category, price'
       });
     }
 
@@ -227,14 +227,14 @@ exports.getProducts = async (req, res) => {
     if (location) {
       const User = require('../models/User');
       const locationRegex = new RegExp(location, 'i');
-      
+
       // Étape 1: Trouver les IDs des vendeurs dans cette localisation
       const sellersInLocation = await User.find(
         { location: locationRegex },
         { _id: 1 }
       );
       const sellerIds = sellersInLocation.map(s => s._id);
-      
+
       // Étape 2: Construire les filtres de base
       const filter = { status };
       if (categoryFilter) Object.assign(filter, categoryFilter);
@@ -242,13 +242,13 @@ exports.getProducts = async (req, res) => {
       if (type) filter.type = type;
       if (condition) filter.condition = condition;
       if (seller) filter.seller = seller;
-      
+
       // Étape 3: Filtrer par produits avec location OU vendeurs dans cette localisation
       filter.$or = [
         { location: locationRegex },
         { seller: { $in: sellerIds } }
       ];
-      
+
       // 🔎 Recherche par texte (titre + description) - regex pour correspondances partielles
       if (search) {
         const searchRegex = new RegExp(search, 'i');
@@ -260,10 +260,10 @@ exports.getProducts = async (req, res) => {
           ]
         });
       }
-      
+
       // 📊 Exécuter la requête avec filtre de localisation
       const skip = (parseInt(page) - 1) * parseInt(limit);
-      
+
       const [products, total] = await Promise.all([
         Product.find(filter)
           .populate('seller', 'name avatar phone email whatsapp businessType businessName rating totalSales location')
@@ -272,7 +272,7 @@ exports.getProducts = async (req, res) => {
           .limit(parseInt(limit)),
         Product.countDocuments(filter)
       ]);
-      
+
       // 🔄 Transformer en format Item
       const productsJSON = await Promise.all(
         products.map(product => product.toItemJSON())
@@ -289,7 +289,7 @@ exports.getProducts = async (req, res) => {
         }
       });
     }
-    
+
     // 🔍 Si pas de filtre localisation, utiliser le filtre classique
     const filter = { status };
 
@@ -316,7 +316,7 @@ exports.getProducts = async (req, res) => {
 
     // 📊 Exécuter la requête
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    
+
     const [products, total] = await Promise.all([
       Product.find(filter)
         .populate('seller', 'name avatar phone email whatsapp businessType businessName rating totalSales location')
@@ -373,7 +373,7 @@ exports.getProductById = async (req, res) => {
     // � Vérifier si le produit est actif
     // Si l'utilisateur n'est pas le vendeur et que le produit n'est pas actif, refuser l'accès
     const isOwner = req.user && product.seller && product.seller._id.toString() === req.user.id;
-    
+
     if (!isOwner && product.status !== 'active') {
       return res.status(404).json({
         success: false,
@@ -803,7 +803,7 @@ exports.getLocations = async (req, res) => {
   try {
     // 📍 Récupérer les localisations des produits actifs
     const productLocations = await Product.distinct('location', { status: 'active' });
-    
+
     // 👥 Récupérer les localisations des vendeurs qui ont des produits actifs
     const sellersWithProducts = await Product.aggregate([
       { $match: { status: 'active' } },
@@ -820,12 +820,12 @@ exports.getLocations = async (req, res) => {
       { $match: { 'sellerInfo.location': { $exists: true, $ne: '' } } },
       { $group: { _id: '$sellerInfo.location' } }
     ]);
-    
+
     const sellerLocations = sellersWithProducts.map(item => item._id);
-    
+
     // 🔗 Combiner et dédupliquer les localisations
     const allLocations = [...new Set([...productLocations, ...sellerLocations])];
-    
+
     // 📊 Trier alphabétiquement et filtrer les valeurs vides
     const sortedLocations = allLocations
       .filter(loc => loc && loc.trim() !== '')
@@ -858,26 +858,26 @@ exports.getPlatformStats = async (req, res) => {
 
     // Compter les annonces actives
     const totalProducts = await Product.countDocuments({ status: 'active' });
-    
+
     // Compter les utilisateurs actifs
     const totalUsers = await User.countDocuments({ isActive: true });
-    
+
     // Compter les villes uniques (depuis products + users)
     const productLocations = await Product.distinct('location', { status: 'active' });
     const userLocations = await User.distinct('location', { isActive: true });
-    
+
     // Extraire les villes (avant la virgule) et dédupliquer
     const extractCity = (location) => {
       if (!location) return null;
       const city = location.split(',')[0].trim();
       return city;
     };
-    
+
     const allCities = [
       ...productLocations.map(extractCity),
       ...userLocations.map(extractCity)
     ].filter(city => city && city !== '');
-    
+
     const uniqueCities = [...new Set(allCities)];
     const totalCities = uniqueCities.length;
 

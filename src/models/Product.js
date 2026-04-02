@@ -7,7 +7,7 @@ const productSchema = new mongoose.Schema({
     ref: 'User',
     required: [true, 'Le vendeur est obligatoire']
   },
-  
+
   // 📝 Informations de base
   title: {
     type: String,
@@ -17,10 +17,11 @@ const productSchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    required: [true, 'La description est obligatoire'],
+    // required: [true, 'La description est obligatoire'],
+    default: '',
     maxlength: 2000
   },
-  
+
   // 🏷️ Catégorisation
   category: {
     type: mongoose.Schema.Types.ObjectId,
@@ -44,7 +45,7 @@ const productSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
-  
+
   // 🎯 Type (produit ou service)
   type: {
     type: String,
@@ -52,21 +53,21 @@ const productSchema = new mongoose.Schema({
     required: true,
     default: 'product'
   },
-  
+
   // 💰 Prix (simple string comme frontend)
   price: {
     type: String,
     required: [true, 'Le prix est obligatoire'],
     trim: true
   },
-  
+
   // 📍 Localisation (simple string)
   location: {
     type: String,
     required: [true, 'La localisation est obligatoire'],
     trim: true
   },
-  
+
   // 🖼️ Images (array simple de URLs)
   images: [{
     type: String
@@ -75,20 +76,20 @@ const productSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-  
+
   // 🏷️ Condition (pour produits)
   condition: {
     type: String,
     enum: ['new', 'used', 'refurbished'],
     default: 'used'
   },
-  
+
   // 📦 Quantité (string comme frontend)
   quantity: {
     type: String,
     default: '1'
   },
-  
+
   // 📊 Stats
   views: {
     type: Number,
@@ -108,7 +109,7 @@ const productSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-  
+
   // ⭐ Mise en avant
   promoted: {
     type: Boolean,
@@ -118,7 +119,7 @@ const productSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  
+
   // 🚚 Livraison (pour produits)
   delivery: {
     available: {
@@ -129,24 +130,24 @@ const productSchema = new mongoose.Schema({
     areas: [String],
     estimatedTime: String
   },
-  
+
   // 📅 Disponibilité (pour services)
   availability: {
     days: [String],
     openingTime: String,
     closingTime: String
   },
-  
+
   // 🌍 Zone de service (pour services)
   serviceArea: [String],
-  
+
   // 📋 Spécifications
   specifications: {
     type: Map,
     of: String,
     default: {}
   },
-  
+
   // 🔄 Statut
   status: {
     type: String,
@@ -158,28 +159,28 @@ const productSchema = new mongoose.Schema({
 });
 
 // 📊 Virtual pour "postedTime" (temps relatif)
-productSchema.virtual('postedTime').get(function() {
+productSchema.virtual('postedTime').get(function () {
   const now = new Date();
   const diff = now - this.createdAt;
-  
+
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-  
+
   if (minutes < 60) return `${minutes}m`;
   if (hours < 24) return `${hours}h`;
   return `${days}j`;
 });
 
 // 📅 Virtual pour "postedDate"
-productSchema.virtual('postedDate').get(function() {
+productSchema.virtual('postedDate').get(function () {
   return this.createdAt.toISOString().split('T')[0];
 });
 
 // 📦 Méthode pour transformer en format Item du frontend
-productSchema.methods.toItemJSON = async function() {
+productSchema.methods.toItemJSON = async function () {
   await this.populate('seller');
-  
+
   return {
     id: this._id.toString(),
     title: this.title,
@@ -227,24 +228,24 @@ productSchema.index({ title: 'text', description: 'text' });
 productSchema.index({ 'location': 1 });
 
 // 📈 Middleware pour incrémenter views
-productSchema.methods.incrementViews = async function() {
+productSchema.methods.incrementViews = async function () {
   this.views += 1;
   await this.save();
 };
 
 // ⭐ Middleware pour incrémenter favorites
-productSchema.methods.incrementFavorites = async function() {
+productSchema.methods.incrementFavorites = async function () {
   this.favorites += 1;
   await this.save();
 };
 
-productSchema.methods.decrementFavorites = async function() {
+productSchema.methods.decrementFavorites = async function () {
   this.favorites = Math.max(0, this.favorites - 1);
   await this.save();
 };
 
 // 📊 Middleware pour mettre à jour rating
-productSchema.methods.updateRating = async function(newRating, isNew = true) {
+productSchema.methods.updateRating = async function (newRating, isNew = true) {
   if (isNew) {
     const total = this.rating * this.totalReviews + newRating;
     this.totalReviews += 1;
@@ -252,13 +253,13 @@ productSchema.methods.updateRating = async function(newRating, isNew = true) {
   } else {
     // Recalculer depuis la base de données
     const Review = mongoose.model('Review');
-    const reviews = await Review.find({ 
+    const reviews = await Review.find({
       item: this._id,
-      type: 'product' 
+      type: 'product'
     });
     this.totalReviews = reviews.length;
-    this.rating = reviews.length > 0 
-      ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length 
+    this.rating = reviews.length > 0
+      ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
       : 0;
   }
   await this.save();
