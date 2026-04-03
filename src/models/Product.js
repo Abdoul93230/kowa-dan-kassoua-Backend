@@ -180,6 +180,39 @@ productSchema.virtual('postedDate').get(function () {
 // 📦 Méthode pour transformer en format Item du frontend
 productSchema.methods.toItemJSON = async function () {
   await this.populate('seller');
+  
+  // Tenter de populer la catégorie avec gestion d'erreur
+  let categoryName = '';
+  let categoryId = '';
+  
+  try {
+    if (this.category) {
+      // Si category est déjà un objet (déjà populé), utiliser directement
+      if (typeof this.category === 'object' && this.category.name) {
+        categoryName = this.category.name;
+        categoryId = this.category._id.toString();
+      } else {
+        // Sinon, tenter de populer
+        await this.populate('category');
+        if (this.category && this.category.name) {
+          categoryName = this.category.name;
+          categoryId = this.category._id.toString();
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Erreur populate category pour produit', this._id, ':', err.message);
+  }
+
+  // Fallback: si populate a échoué, utiliser le slug ou retourner vide
+  if (!categoryName) {
+    categoryName = this.categorySlug || 'Catégorie non disponible';
+  }
+
+  // Assurer categoryId est toujours un string valide
+  if (!categoryId && this.category) {
+    categoryId = this.category._id ? this.category._id.toString() : this.category.toString();
+  }
 
   return {
     id: this._id.toString(),
@@ -188,8 +221,9 @@ productSchema.methods.toItemJSON = async function () {
     location: this.location,
     images: this.images,
     mainImage: this.mainImage,
-    category: this.categorySlug || this.category, // Retourner le slug pour compatibilité
-    categoryId: this.category, // ObjectId pour les cas où nécessaire
+    category: categoryName, // Nom complet de la catégorie
+    categorySlug: this.categorySlug, // Slug pour compatibilité
+    categoryId: categoryId, // ObjectId pour l'édition
     subcategory: this.subcategory,
     type: this.type,
     rating: this.rating,

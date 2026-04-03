@@ -447,6 +447,25 @@ exports.updateProduct = async (req, res) => {
       newImages, // Nouvelles images à ajouter (base64)
       deleteImages // URLs des images à supprimer
     } = req.body;
+    
+    console.log({
+      title,
+      description,
+      category,
+      subcategory,
+      type,
+      price,
+      location,
+      condition,
+      quantity,
+      delivery,
+      availability,
+      serviceArea,
+      specifications,
+      status,
+      newImages,
+      deleteImages 
+    })
 
     // 🗑️ Supprimer les images demandées
     if (deleteImages && deleteImages.length > 0) {
