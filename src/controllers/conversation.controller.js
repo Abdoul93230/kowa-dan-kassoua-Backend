@@ -10,6 +10,7 @@ const Product = require('../models/Product');
 // @access  Private
 exports.getConversations = async (req, res) => {
   try {
+    console.log({ id: req.user.id });
     const userId = req.user.id;
 
     console.log('📋 Récupération des conversations pour l\'utilisateur:', userId);
@@ -49,11 +50,21 @@ exports.getConversations = async (req, res) => {
       conv.lastMessage.read = readByMessageId.get(lastId);
     });
 
-    console.log(`✅ ${conversations.length} conversation(s) trouvée(s)`);
+    // Ignorer les conversations orphelines (participant supprimé => populate null)
+    const validConversations = conversations.filter(
+      (conv) => conv?.participants?.buyer && conv?.participants?.seller
+    );
+
+    const orphanCount = conversations.length - validConversations.length;
+    if (orphanCount > 0) {
+      console.warn(`⚠️ ${orphanCount} conversation(s) ignorée(s) car participant manquant`);
+    }
+
+    console.log(`✅ ${validConversations.length} conversation(s) valide(s) trouvée(s)`);
 
     // Transformer en format frontend
     const conversationsJSON = await Promise.all(
-      conversations.map(conv => conv.toConversationJSON(userId))
+      validConversations.map((conv) => conv.toConversationJSON(userId))
     );
 
     res.status(200).json({
@@ -93,6 +104,14 @@ exports.getConversationById = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Conversation introuvable'
+      });
+    }
+
+    // Conversation orpheline: un participant a été supprimé
+    if (!conversation.participants?.buyer || !conversation.participants?.seller) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation introuvable (participant manquant)'
       });
     }
 
