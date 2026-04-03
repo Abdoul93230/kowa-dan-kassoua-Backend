@@ -1,6 +1,7 @@
 const Review = require('../models/Review');
 const Product = require('../models/Product');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 
 // ===============================================
 // ✍️ CRÉER UN AVIS
@@ -93,6 +94,13 @@ exports.getProductReviews = async (req, res) => {
   try {
     const { productId } = req.params;
     const { page = 1, limit = 10, sort = '-createdAt' } = req.query;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Identifiant produit invalide'
+      });
+    }
 
     // Vérifier que le produit existe
     const product = await Product.findById(productId);
@@ -234,6 +242,13 @@ exports.markHelpful = async (req, res) => {
 exports.getReviewStats = async (req, res) => {
   try {
     const { productId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Identifiant produit invalide'
+      });
+    }
 
     const product = await Product.findById(productId);
     if (!product) {
