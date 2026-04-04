@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Product = require('../models/Product');
 const { uploadImage } = require('../utils/uploadImage');
 
 // 🔐 Générer Access Token (JWT)
@@ -1003,9 +1004,31 @@ exports.getSellerProfile = async (req, res) => {
       });
     }
 
+    const sellerProducts = await Product.find({ seller: user._id, status: 'active' })
+      .select('rating totalReviews type');
+
+    const totalListings = sellerProducts.length;
+    const totalReviewsFromProducts = sellerProducts.reduce((sum, product) => sum + (Number(product.totalReviews) || 0), 0);
+    const weightedRatingTotal = sellerProducts.reduce((sum, product) => {
+      const productRating = Number(product.rating) || 0;
+      const productReviews = Number(product.totalReviews) || 0;
+      return sum + (productRating * productReviews);
+    }, 0);
+    const computedRating = totalReviewsFromProducts > 0
+      ? weightedRatingTotal / totalReviewsFromProducts
+      : Number(user.sellerStats?.rating) || 0;
+
+    const sellerJson = await user.toSellerJSON(totalListings);
+
+    sellerJson.rating = computedRating;
+    sellerJson.totalReviews = totalReviewsFromProducts > 0
+      ? totalReviewsFromProducts
+      : Number(user.sellerStats?.totalReviews) || 0;
+    sellerJson.totalListings = totalListings;
+
     res.status(200).json({
       success: true,
-      data: await user.toSellerJSON()
+      data: sellerJson
     });
 
   } catch (error) {

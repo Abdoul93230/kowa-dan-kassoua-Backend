@@ -196,6 +196,7 @@ userSchema.methods.toSellerJSON = function(totalListings = 0) {
   return {
     id: this._id.toString(),
     name: this.name,
+    businessName: this.businessName,
     avatar: this.avatar,
     rating: this.sellerStats.rating,
     totalReviews: this.sellerStats.totalReviews,
