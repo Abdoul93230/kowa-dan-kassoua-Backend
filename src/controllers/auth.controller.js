@@ -3,6 +3,10 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const { uploadImage } = require('../utils/uploadImage');
 
+const normalizeEmail = (value = '') => String(value || '').trim().toLowerCase();
+const normalizePhone = (value = '') => String(value || '').trim().replace(/\s+/g, ' ');
+const escapeRegExp = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // 🔐 Générer Access Token (JWT)
 const generateAccessToken = (userId) => {
   return jwt.sign(
@@ -139,9 +143,11 @@ exports.register = async (req, res) => {
       });
     }
 
+    const normalizedEmail = email ? normalizeEmail(email) : '';
+
     // ✅ Vérifier si l'email existe déjà (si fourni)
-    if (email) {
-      const emailExists = await User.findOne({ email });
+    if (normalizedEmail) {
+      const emailExists = await User.findOne({ email: normalizedEmail });
       if (emailExists) {
         return res.status(400).json({
           success: false,
@@ -171,7 +177,7 @@ exports.register = async (req, res) => {
     const user = await User.create({
       name,
       phone,
-      email: email || undefined,
+      email: normalizedEmail || undefined,
       password,  // Sera hashé par le pre-save hook
       businessType: businessType || 'individual',
       businessName: finalBusinessName,
@@ -224,6 +230,8 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
   try {
     const { loginType, phone, email, password } = req.body;
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedEmail = normalizeEmail(email);
 
     console.log('🔐 Tentative de connexion:');
     console.log('  - Type:', loginType);
@@ -246,14 +254,14 @@ exports.login = async (req, res) => {
       });
     }
 
-    if (loginType === 'phone' && !phone) {
+    if (loginType === 'phone' && !normalizedPhone) {
       return res.status(400).json({
         success: false,
         message: 'Le numéro de téléphone est requis'
       });
     }
 
-    if (loginType === 'email' && !email) {
+    if (loginType === 'email' && !normalizedEmail) {
       return res.status(400).json({
         success: false,
         message: 'L\'email est requis'
@@ -263,11 +271,12 @@ exports.login = async (req, res) => {
     // 🔍 Trouver l'utilisateur (avec password)
     let user;
     if (loginType === 'phone') {
-      console.log('🔍 Recherche utilisateur par téléphone:', phone);
-      user = await User.findOne({ phone }).select('+password');
+      console.log('🔍 Recherche utilisateur par téléphone:', normalizedPhone);
+      user = await User.findOne({ phone: normalizedPhone }).select('+password');
     } else {
-      console.log('🔍 Recherche utilisateur par email:', email);
-      user = await User.findOne({ email }).select('+password');
+      console.log('🔍 Recherche utilisateur par email:', normalizedEmail);
+      const emailRegex = new RegExp(`^${escapeRegExp(normalizedEmail)}$`, 'i');
+      user = await User.findOne({ email: emailRegex }).select('+password');
     }
 
     console.log('👤 Utilisateur trouvé:', user ? 'OUI' : 'NON');
@@ -554,11 +563,15 @@ exports.forgotPassword = async (req, res) => {
     }
 
     // 🔍 Détecter si c'est un email ou un téléphone
-    const isEmail = identifier.includes('@');
+    const trimmedIdentifier = String(identifier || '').trim();
+    const isEmail = trimmedIdentifier.includes('@');
+    const normalizedIdentifier = isEmail
+      ? normalizeEmail(trimmedIdentifier)
+      : normalizePhone(trimmedIdentifier);
     
     // Chercher l'utilisateur
     const user = await User.findOne(
-      isEmail ? { email: identifier } : { phone: identifier }
+      isEmail ? { email: normalizedIdentifier } : { phone: normalizedIdentifier }
     );
 
     // ❌ Vérifier si l'utilisateur existe
@@ -586,7 +599,7 @@ exports.forgotPassword = async (req, res) => {
     await user.save();
 
     // TODO: Envoyer le code par SMS (si téléphone) ou email (si email)
-    console.log(`📧 Code de réinitialisation pour ${identifier}:`, resetCode);
+    console.log(`📧 Code de réinitialisation pour ${normalizedIdentifier}:`, resetCode);
 
     res.status(200).json({
       success: true,
@@ -620,11 +633,15 @@ exports.verifyResetCode = async (req, res) => {
     }
 
     // 🔍 Détecter si c'est un email ou un téléphone
-    const isEmail = identifier.includes('@');
+    const trimmedIdentifier = String(identifier || '').trim();
+    const isEmail = trimmedIdentifier.includes('@');
+    const normalizedIdentifier = isEmail
+      ? normalizeEmail(trimmedIdentifier)
+      : normalizePhone(trimmedIdentifier);
     
     // Chercher l'utilisateur
     const user = await User.findOne(
-      isEmail ? { email: identifier } : { phone: identifier }
+      isEmail ? { email: normalizedIdentifier } : { phone: normalizedIdentifier }
     );
 
     if (!user) {
@@ -659,7 +676,7 @@ exports.verifyResetCode = async (req, res) => {
     }
 
     // ✅ Code valide
-    console.log(`✅ Code vérifié avec succès pour: ${identifier}`);
+    console.log(`✅ Code vérifié avec succès pour: ${normalizedIdentifier}`);
 
     res.status(200).json({
       success: true,
@@ -698,11 +715,15 @@ exports.resetPassword = async (req, res) => {
     }
 
     // 🔍 Détecter si c'est un email ou un téléphone
-    const isEmail = identifier.includes('@');
+    const trimmedIdentifier = String(identifier || '').trim();
+    const isEmail = trimmedIdentifier.includes('@');
+    const normalizedIdentifier = isEmail
+      ? normalizeEmail(trimmedIdentifier)
+      : normalizePhone(trimmedIdentifier);
     
     // Chercher l'utilisateur
     const user = await User.findOne(
-      isEmail ? { email: identifier } : { phone: identifier }
+      isEmail ? { email: normalizedIdentifier } : { phone: normalizedIdentifier }
     ).select('+password'); // Inclure le mot de passe pour le modifier
 
     if (!user) {
@@ -744,7 +765,7 @@ exports.resetPassword = async (req, res) => {
     
     await user.save();
 
-    console.log(`✅ Mot de passe réinitialisé pour: ${identifier}`);
+    console.log(`✅ Mot de passe réinitialisé pour: ${normalizedIdentifier}`);
 
     res.status(200).json({
       success: true,
