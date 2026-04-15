@@ -102,6 +102,10 @@ const userSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
+    dealsConcluded: {
+      type: Number,
+      default: 0
+    },
     categories: [{
       type: String
     }]
@@ -204,6 +208,7 @@ userSchema.methods.toSellerJSON = function(totalListings = 0) {
     memberSince: this.memberSince,
     responseTime: this.sellerStats.responseTime,
     responseRate: this.sellerStats.responseRate,
+    dealsConcluded: this.sellerStats.dealsConcluded || 0,
     location: this.location,
     city: this.location,
     bio: this.description,

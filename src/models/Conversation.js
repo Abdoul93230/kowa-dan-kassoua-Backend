@@ -61,6 +61,37 @@ const conversationSchema = new mongoose.Schema({
     type: String,
     enum: ['active', 'archived'],
     default: 'active'
+  },
+
+  // 🤝 Résolution de l'affaire
+  deal: {
+    status: {
+      type: String,
+      enum: ['open', 'pending_conclusion', 'concluded', 'not_concluded'],
+      default: 'open'
+    },
+    requestedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    requestedAt: {
+      type: Date,
+      default: null
+    },
+    resolvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    resolvedAt: {
+      type: Date,
+      default: null
+    },
+    note: {
+      type: String,
+      default: ''
+    }
   }
 }, {
   timestamps: true
@@ -104,7 +135,15 @@ conversationSchema.methods.toConversationJSON = async function(userId) {
     unreadCount: unread,
     createdAt: this.createdAt ? this.createdAt.toISOString() : new Date().toISOString(),
     updatedAt: this.updatedAt ? this.updatedAt.toISOString() : new Date().toISOString(),
-    status: this.status
+    status: this.status,
+    deal: {
+      status: this.deal?.status || 'open',
+      requestedBy: this.deal?.requestedBy ? this.deal.requestedBy.toString() : null,
+      requestedAt: this.deal?.requestedAt ? this.deal.requestedAt.toISOString() : null,
+      resolvedBy: this.deal?.resolvedBy ? this.deal.resolvedBy.toString() : null,
+      resolvedAt: this.deal?.resolvedAt ? this.deal.resolvedAt.toISOString() : null,
+      note: this.deal?.note || ''
+    }
   };
 };
 

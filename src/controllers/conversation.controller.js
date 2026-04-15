@@ -1,6 +1,69 @@
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 const Product = require('../models/Product');
+const User = require('../models/User');
+
+const DEAL_STATUS = {
+  OPEN: 'open',
+  PENDING: 'pending_conclusion',
+  CONCLUDED: 'concluded',
+  NOT_CONCLUDED: 'not_concluded',
+};
+
+const emitConversationUpdate = async (req, conversation, userId) => {
+  const io = req.app.get('io');
+  const socketUtils = req.app.get('socketUtils');
+
+  if (!io || !socketUtils) return;
+
+  try {
+    const connectedUsers = socketUtils.getConnectedUsers();
+    const payload = {
+      conversationId: conversation._id.toString(),
+      lastMessage: conversation.lastMessage,
+      unreadCount: conversation.participants?.buyer?.toString() === userId
+        ? conversation.unreadCount.buyer
+        : conversation.unreadCount.seller,
+      status: conversation.status,
+      deal: {
+        status: conversation.deal?.status || DEAL_STATUS.OPEN,
+        requestedBy: conversation.deal?.requestedBy ? conversation.deal.requestedBy.toString() : null,
+        requestedAt: conversation.deal?.requestedAt || null,
+        resolvedBy: conversation.deal?.resolvedBy ? conversation.deal.resolvedBy.toString() : null,
+        resolvedAt: conversation.deal?.resolvedAt || null,
+        note: conversation.deal?.note || ''
+      }
+    };
+
+    const recipients = [conversation.participants.buyer, conversation.participants.seller]
+      .map((participant) => participant?.toString())
+      .filter(Boolean);
+
+    recipients.forEach((recipientId) => {
+      if (connectedUsers && connectedUsers.has(recipientId)) {
+        connectedUsers.get(recipientId).forEach((socketId) => {
+          io.to(socketId).emit('conversation:updated', payload);
+        });
+      }
+    });
+  } catch (error) {
+    console.error('⚠️ Erreur emission conversation:updated:', error.message);
+  }
+};
+
+const adjustSellerDealCount = async (conversation, delta) => {
+  if (!delta) return;
+
+  const sellerId = conversation?.participants?.seller;
+  if (!sellerId) return;
+
+  await User.updateOne(
+    { _id: sellerId },
+    {
+      $inc: { 'sellerStats.dealsConcluded': delta },
+    }
+  );
+};
 
 // ===============================================
 // 📋 OBTENIR TOUTES LES CONVERSATIONS D'UN UTILISATEUR
@@ -460,6 +523,132 @@ exports.archiveConversation = async (req, res) => {
       success: false,
       message: 'Erreur lors de l\'archivage de la conversation',
       error: error.message
+    });
+  }
+};
+
+// ===============================================
+// 🤝 METTRE À JOUR LE STATUT D'AFFAIRE
+// ===============================================
+// @route   PUT /api/conversations/:id/deal
+// @access  Private
+
+// ===============================================
+// 🤝 METTRE À JOUR L'ÉTAT DE CONCLUSION D'UNE CONVERSATION
+// ===============================================
+// @route   PUT /api/conversations/:id/deal
+// @access  Private
+exports.updateConversationDeal = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, note } = req.body || {};
+    const userId = req.user.id;
+
+    const conversation = await Conversation.findById(id)
+      .populate('participants.buyer', 'name avatar')
+      .populate('participants.seller', 'name avatar');
+
+    if (!conversation) {
+      return res.status(404).json({ success: false, message: 'Conversation introuvable' });
+    }
+
+    const isBuyer = conversation.participants.buyer?._id?.toString() === userId;
+    const isSeller = conversation.participants.seller?._id?.toString() === userId;
+
+    if (!isBuyer && !isSeller) {
+      return res.status(403).json({ success: false, message: 'Accès non autorisé' });
+    }
+
+    const currentStatus = conversation.deal?.status || DEAL_STATUS.OPEN;
+    const actionName = String(action || '').trim();
+    const now = new Date();
+    const previousStatus = currentStatus;
+
+    if (actionName === 'request' || actionName === 'start') {
+      if (currentStatus === DEAL_STATUS.CONCLUDED) {
+        return res.status(400).json({ success: false, message: 'Cette affaire est déjà conclue' });
+      }
+
+      conversation.deal = {
+        status: DEAL_STATUS.PENDING,
+        requestedBy: userId,
+        requestedAt: now,
+        resolvedBy: null,
+        resolvedAt: null,
+        note: String(note || '').trim(),
+      };
+    } else if (actionName === 'confirm') {
+      if (currentStatus !== DEAL_STATUS.PENDING) {
+        return res.status(400).json({ success: false, message: 'Aucune demande de clôture en attente' });
+      }
+
+      if (String(conversation.deal?.requestedBy || '') === String(userId)) {
+        return res.status(400).json({ success: false, message: 'Le demandeur ne peut pas confirmer sa propre demande' });
+      }
+
+      conversation.deal = {
+        status: DEAL_STATUS.CONCLUDED,
+        requestedBy: conversation.deal?.requestedBy || null,
+        requestedAt: conversation.deal?.requestedAt || null,
+        resolvedBy: userId,
+        resolvedAt: now,
+        note: String(note || conversation.deal?.note || '').trim(),
+      };
+
+      if (previousStatus !== DEAL_STATUS.CONCLUDED) {
+        await adjustSellerDealCount(conversation, 1);
+      }
+    } else if (actionName === 'decline') {
+      if (currentStatus !== DEAL_STATUS.PENDING) {
+        return res.status(400).json({ success: false, message: 'Aucune demande de clôture en attente' });
+      }
+
+      conversation.deal = {
+        status: DEAL_STATUS.NOT_CONCLUDED,
+        requestedBy: conversation.deal?.requestedBy || null,
+        requestedAt: conversation.deal?.requestedAt || null,
+        resolvedBy: userId,
+        resolvedAt: now,
+        note: String(note || '').trim(),
+      };
+    } else if (actionName === 'reopen') {
+      if (previousStatus === DEAL_STATUS.CONCLUDED) {
+        await adjustSellerDealCount(conversation, -1);
+      }
+
+      conversation.deal = {
+        status: DEAL_STATUS.OPEN,
+        requestedBy: null,
+        requestedAt: null,
+        resolvedBy: null,
+        resolvedAt: null,
+        note: '',
+      };
+    } else {
+      return res.status(400).json({ success: false, message: 'Action invalide' });
+    }
+
+    conversation.markModified('deal');
+    await conversation.save();
+
+    await emitConversationUpdate(req, conversation, userId);
+
+    const refreshed = await Conversation.findById(id)
+      .populate('participants.buyer', 'name avatar phone email')
+      .populate('participants.seller', 'name avatar phone email location rating totalReviews verified businessType')
+      .populate('item.id', 'title mainImage price status');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Statut de l\'affaire mis à jour',
+      data: await refreshed.toConversationJSON(userId),
+    });
+  } catch (error) {
+    console.error('❌ Erreur mise à jour statut affaire:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la mise à jour du statut de l\'affaire',
+      error: error.message,
     });
   }
 };
