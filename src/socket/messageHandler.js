@@ -2,10 +2,50 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
+const { sendExpoPushNotifications } = require('../utils/expoNotifications');
 
 // Map pour stocker les utilisateurs connectés
 // Format: { userId: Set of socketIds }
 const connectedUsers = new Map();
+
+const buildMessageNotificationBody = ({ senderName, content, type }) => {
+  const safeSenderName = senderName || 'Nouveau message';
+
+  if (type === 'audio') {
+    return `${safeSenderName} vous a envoyé un message vocal.`;
+  }
+
+  const normalized = String(content || '').trim();
+  if (!normalized) {
+    return `${safeSenderName} vous a envoyé un message.`;
+  }
+
+  const preview = normalized.length > 90 ? `${normalized.substring(0, 87)}...` : normalized;
+  return `${safeSenderName}: ${preview}`;
+};
+
+const notifyRecipientNewMessage = async ({ recipientId, conversationId, senderName, content, type }) => {
+  if (!recipientId || !conversationId) return;
+
+  try {
+    const recipient = await User.findById(recipientId).select('expoPushTokens');
+    const tokens = Array.isArray(recipient?.expoPushTokens) ? recipient.expoPushTokens : [];
+
+    if (tokens.length === 0) return;
+
+    await sendExpoPushNotifications({
+      tokens,
+      title: 'Nouveau message',
+      body: buildMessageNotificationBody({ senderName, content, type }),
+      data: {
+        type: 'message:new',
+        conversationId: String(conversationId),
+      }
+    });
+  } catch (notificationError) {
+    console.error('⚠️ Erreur notification push message(socket):', notificationError.message);
+  }
+};
 
 /**
  * Configuration du gestionnaire Socket.IO pour la messagerie temps réel
@@ -195,6 +235,14 @@ const setupSocketHandlers = (io) => {
             io.to(socketId).emit('unreadCount:changed');
           });
         }
+
+        await notifyRecipientNewMessage({
+          recipientId: otherUserId,
+          conversationId,
+          senderName: sender.name,
+          content,
+          type,
+        });
 
         console.log('✅ Message envoyé:', message._id);
 

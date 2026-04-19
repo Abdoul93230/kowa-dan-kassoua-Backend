@@ -1,6 +1,47 @@
 const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
+const User = require('../models/User');
+const { sendExpoPushNotifications } = require('../utils/expoNotifications');
 const { uploadAudio } = require('../utils/uploadAudio');
+
+const buildMessageNotificationBody = ({ senderName, content, type }) => {
+  const safeSenderName = senderName || 'Nouveau message';
+
+  if (type === 'audio') {
+    return `${safeSenderName} vous a envoyé un message vocal.`;
+  }
+
+  const normalized = String(content || '').trim();
+  if (!normalized) {
+    return `${safeSenderName} vous a envoyé un message.`;
+  }
+
+  const preview = normalized.length > 90 ? `${normalized.substring(0, 87)}...` : normalized;
+  return `${safeSenderName}: ${preview}`;
+};
+
+const notifyRecipientNewMessage = async ({ recipientId, conversationId, senderName, content, type }) => {
+  if (!recipientId || !conversationId) return;
+
+  try {
+    const recipient = await User.findById(recipientId).select('expoPushTokens');
+    const tokens = Array.isArray(recipient?.expoPushTokens) ? recipient.expoPushTokens : [];
+
+    if (tokens.length === 0) return;
+
+    await sendExpoPushNotifications({
+      tokens,
+      title: 'Nouveau message',
+      body: buildMessageNotificationBody({ senderName, content, type }),
+      data: {
+        type: 'message:new',
+        conversationId: String(conversationId),
+      }
+    });
+  } catch (notificationError) {
+    console.error('⚠️ Erreur notification push message:', notificationError.message);
+  }
+};
 
 // ===============================================
 // 📋 OBTENIR LES MESSAGES D'UNE CONVERSATION
@@ -158,10 +199,55 @@ exports.sendMessage = async (req, res) => {
     conversation.updatedAt = new Date();
     await conversation.save();
 
+    const messageJSON = message.toMessageJSON();
+
+    // Émettre via Socket.IO pour notification temps réel
+    const io = req.app.get('io');
+    const socketUtils = req.app.get('socketUtils');
+
+    if (io) {
+      io.to(conversationId).emit('message:new', messageJSON);
+
+      const otherUserId = isBuyer
+        ? conversation.participants.seller._id.toString()
+        : conversation.participants.buyer._id.toString();
+
+      if (socketUtils) {
+        try {
+          const connectedUsers = socketUtils.getConnectedUsers();
+          if (connectedUsers && connectedUsers.has(otherUserId)) {
+            const otherUserSockets = connectedUsers.get(otherUserId);
+            otherUserSockets.forEach((socketId) => {
+              io.to(socketId).emit('conversation:updated', {
+                conversationId,
+                lastMessage: conversation.lastMessage,
+                unreadCount: isBuyer ? conversation.unreadCount.seller : conversation.unreadCount.buyer
+              });
+              io.to(socketId).emit('unreadCount:changed');
+            });
+          }
+        } catch (socketError) {
+          console.error('⚠️ Erreur notification Socket.IO:', socketError.message);
+        }
+      }
+    }
+
+    const recipientId = isBuyer
+      ? conversation.participants.seller._id.toString()
+      : conversation.participants.buyer._id.toString();
+
+    await notifyRecipientNewMessage({
+      recipientId,
+      conversationId,
+      senderName: sender.name,
+      content,
+      type,
+    });
+
     // Retourner le message
     res.status(201).json({
       success: true,
-      data: message.toMessageJSON()
+      data: messageJSON
     });
 
   } catch (error) {
@@ -494,6 +580,18 @@ exports.sendVoiceMessage = async (req, res) => {
         }
       }
     }
+
+    const recipientId = isBuyer
+      ? conversation.participants.seller._id.toString()
+      : conversation.participants.buyer._id.toString();
+
+    await notifyRecipientNewMessage({
+      recipientId,
+      conversationId,
+      senderName: sender.name,
+      content: '',
+      type: 'audio',
+    });
 
     console.log('✅ Message vocal envoyé:', message._id);
 
