@@ -449,7 +449,10 @@ exports.markConversationAsRead = async (req, res) => {
       conversation.lastMessage?.senderId &&
       conversation.lastMessage.senderId.toString() !== userId
     ) {
+      conversation.lastMessage.delivered = true;
+      conversation.lastMessage.deliveredAt = new Date();
       conversation.lastMessage.read = true;
+      conversation.lastMessage.readAt = new Date();
       await conversation.save();
     }
 

@@ -297,7 +297,10 @@ const setupSocketHandlers = (io) => {
           senderId: message.senderId.toString(),
           senderName: message.senderName,
           timestamp: message.timestamp,
+          delivered: false,
+          deliveredAt: null,
           read: false,
+          readAt: null,
           type: message.type
         };
 
@@ -328,6 +331,9 @@ const setupSocketHandlers = (io) => {
           message.delivered = true;
           message.deliveredAt = deliveredAt;
           await message.save();
+          conversation.lastMessage.delivered = true;
+          conversation.lastMessage.deliveredAt = deliveredAt;
+          await conversation.save();
 
           emitMessageDelivered({
             io,
@@ -432,6 +438,13 @@ const setupSocketHandlers = (io) => {
         // Décrémenter le compteur de non-lus dans la conversation
         const conversation = await Conversation.findById(conversationId);
         if (conversation) {
+          if (conversation.lastMessage?.id?.toString() === messageId) {
+            conversation.lastMessage.delivered = true;
+            conversation.lastMessage.deliveredAt = message.deliveredAt || conversation.lastMessage.deliveredAt || new Date();
+            conversation.lastMessage.read = true;
+            conversation.lastMessage.readAt = message.readAt || new Date();
+          }
+
           const isBuyer = conversation.participants.buyer.toString() === userId;
           
           if (isBuyer && conversation.unreadCount.buyer > 0) {

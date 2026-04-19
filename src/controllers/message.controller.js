@@ -206,7 +206,10 @@ exports.sendMessage = async (req, res) => {
       senderId: message.senderId.toString(),
       senderName: message.senderName,
       timestamp: message.timestamp,
+      delivered: false,
+      deliveredAt: null,
       read: false,
+      readAt: null,
       type: message.type
     };
 
@@ -235,6 +238,9 @@ exports.sendMessage = async (req, res) => {
         message.delivered = true;
         message.deliveredAt = deliveredAt;
         await message.save();
+        conversation.lastMessage.delivered = true;
+        conversation.lastMessage.deliveredAt = deliveredAt;
+        await conversation.save();
 
         emitMessageDelivered({
           io,
@@ -398,7 +404,10 @@ exports.deleteMessage = async (req, res) => {
           senderId: previousMessage.senderId.toString(),
           senderName: previousMessage.senderName,
           timestamp: previousMessage.timestamp,
+          delivered: Boolean(previousMessage.delivered),
+          deliveredAt: previousMessage.deliveredAt || null,
           read: previousMessage.read,
+          readAt: previousMessage.readAt || null,
           type: previousMessage.type
         };
       } else {
@@ -407,7 +416,10 @@ exports.deleteMessage = async (req, res) => {
           senderId: userId,
           senderName: '',
           timestamp: new Date().toISOString(),
+          delivered: true,
+          deliveredAt: new Date(),
           read: true,
+          readAt: new Date(),
           type: 'deleted'
         };
       }
@@ -569,7 +581,10 @@ exports.sendVoiceMessage = async (req, res) => {
       senderId: message.senderId.toString(),
       senderName: message.senderName,
       timestamp: message.timestamp,
+      delivered: false,
+      deliveredAt: null,
       read: false,
+      readAt: null,
       type: 'audio'
     };
 
@@ -598,6 +613,9 @@ exports.sendVoiceMessage = async (req, res) => {
         message.delivered = true;
         message.deliveredAt = deliveredAt;
         await message.save();
+        conversation.lastMessage.delivered = true;
+        conversation.lastMessage.deliveredAt = deliveredAt;
+        await conversation.save();
 
         emitMessageDelivered({
           io,

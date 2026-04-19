@@ -36,7 +36,19 @@ const conversationSchema = new mongoose.Schema({
     senderId: String,
     senderName: String,
     timestamp: String,
+    delivered: {
+      type: Boolean,
+      default: false
+    },
+    deliveredAt: {
+      type: Date,
+      default: null
+    },
     read: Boolean,
+    readAt: {
+      type: Date,
+      default: null
+    },
     type: {
       type: String,
       enum: ['text', 'image', 'audio', 'offer'],
@@ -155,7 +167,10 @@ conversationSchema.methods.updateLastMessage = async function(message) {
     senderId: message.senderId.toString(),
     senderName: message.senderName,
     timestamp: message.timestamp,
+    delivered: Boolean(message.delivered),
+    deliveredAt: message.deliveredAt || null,
     read: message.read,
+    readAt: message.readAt || null,
     type: message.type
   };
   this.updatedAt = new Date();
