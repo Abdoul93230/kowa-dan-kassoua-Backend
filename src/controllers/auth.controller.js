@@ -557,7 +557,13 @@ exports.registerPushToken = async (req, res) => {
     const { expoPushToken } = req.body || {};
     const token = String(expoPushToken || '').trim();
 
+    console.log('📣 /auth/push-token called', {
+      userId: req.user?.id,
+      tokenPreview: token ? token.substring(0, 24) + '...' : null,
+    });
+
     if (!token) {
+      console.log('⚠️ /auth/push-token refused: token manquant');
       return res.status(400).json({
         success: false,
         message: 'Token Expo manquant'
@@ -567,6 +573,7 @@ exports.registerPushToken = async (req, res) => {
     const user = await User.findById(req.user.id);
 
     if (!user) {
+      console.log('⚠️ /auth/push-token refused: utilisateur introuvable', { userId: req.user?.id });
       return res.status(404).json({
         success: false,
         message: 'Utilisateur non trouvé'
@@ -581,6 +588,11 @@ exports.registerPushToken = async (req, res) => {
     user.expoPushTokens = [token];
 
     await user.save();
+
+    console.log('✅ /auth/push-token saved', {
+      userId: req.user?.id,
+      tokensCount: user.expoPushTokens.length,
+    });
 
     res.status(200).json({
       success: true,
