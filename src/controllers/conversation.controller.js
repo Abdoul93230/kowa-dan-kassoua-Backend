@@ -2,6 +2,7 @@ const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 const Product = require('../models/Product');
 const User = require('../models/User');
+const { sendExpoPushNotifications } = require('../utils/expoNotifications');
 
 const DEAL_STATUS = {
   OPEN: 'open',
@@ -63,6 +64,48 @@ const adjustSellerDealCount = async (conversation, delta) => {
       $inc: { 'sellerStats.dealsConcluded': delta },
     }
   );
+};
+
+const buildDealNotification = (actionName, conversation, actorUserId) => {
+  const actorName = conversation?.participants?.buyer?._id?.toString() === actorUserId
+    ? conversation?.participants?.buyer?.name || 'Un utilisateur'
+    : conversation?.participants?.seller?.name || 'Un utilisateur';
+
+  const itemTitle = conversation?.item?.title ? ` pour "${conversation.item.title}"` : '';
+
+  if (actionName === 'request' || actionName === 'start') {
+    return {
+      recipientId: conversation?.participants?.buyer?._id?.toString() || null,
+      title: 'Nouvelle demande de clôture',
+      body: `${actorName} a demandé la clôture${itemTitle}.`,
+    };
+  }
+
+  if (actionName === 'confirm') {
+    return {
+      recipientId: conversation?.participants?.seller?._id?.toString() || null,
+      title: 'Clôture validée',
+      body: `${actorName} a validé la clôture${itemTitle}.`,
+    };
+  }
+
+  if (actionName === 'decline') {
+    return {
+      recipientId: conversation?.participants?.seller?._id?.toString() || null,
+      title: 'Clôture refusée',
+      body: `${actorName} a refusé la clôture${itemTitle}.`,
+    };
+  }
+
+  if (actionName === 'reopen') {
+    return {
+      recipientId: conversation?.participants?.buyer?._id?.toString() || null,
+      title: 'Conversation rouverte',
+      body: `${actorName} a rouvert la conversation${itemTitle}.`,
+    };
+  }
+
+  return null;
 };
 
 // ===============================================
@@ -564,6 +607,27 @@ exports.updateConversationDeal = async (req, res) => {
     const now = new Date();
     const previousStatus = currentStatus;
 
+    if ((actionName === 'request' || actionName === 'start') && !isSeller) {
+      return res.status(403).json({
+        success: false,
+        message: 'Seul le posteur peut demander la clôture'
+      });
+    }
+
+    if ((actionName === 'confirm' || actionName === 'decline') && !isBuyer) {
+      return res.status(403).json({
+        success: false,
+        message: 'Seul le client peut valider ou refuser la demande'
+      });
+    }
+
+    if (actionName === 'reopen' && !isSeller) {
+      return res.status(403).json({
+        success: false,
+        message: 'Seul le posteur peut rouvrir la conversation'
+      });
+    }
+
     if (actionName === 'request' || actionName === 'start') {
       if (currentStatus === DEAL_STATUS.CONCLUDED) {
         return res.status(400).json({ success: false, message: 'Cette affaire est déjà conclue' });
@@ -632,6 +696,28 @@ exports.updateConversationDeal = async (req, res) => {
     await conversation.save();
 
     await emitConversationUpdate(req, conversation, userId);
+
+    const notification = buildDealNotification(actionName, conversation, userId);
+    if (notification?.recipientId) {
+      try {
+        const recipient = await User.findById(notification.recipientId).select('expoPushTokens name');
+        const tokens = Array.isArray(recipient?.expoPushTokens) ? recipient.expoPushTokens : [];
+
+        await sendExpoPushNotifications({
+          tokens,
+          title: notification.title,
+          body: notification.body,
+          data: {
+            type: 'conversation_deal_update',
+            conversationId: conversation._id.toString(),
+            action: actionName,
+            dealStatus: conversation.deal?.status || DEAL_STATUS.OPEN
+          }
+        });
+      } catch (pushError) {
+        console.error('⚠️ Erreur envoi notification push:', pushError.message);
+      }
+    }
 
     const refreshed = await Conversation.findById(id)
       .populate('participants.buyer', 'name avatar phone email')

@@ -155,6 +155,12 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+
+  // 📣 Jetons Expo pour les notifications push
+  expoPushTokens: [{
+    type: String,
+    trim: true
+  }],
   
   // 📱 Compte minimal (créé via inscription contextuelle Mode 1)
   isMinimalAccount: {

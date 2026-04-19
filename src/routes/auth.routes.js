@@ -81,6 +81,11 @@ router.get('/me', protect, authController.getMe);
 // @access  Private
 router.put('/profile', protect, authController.updateProfile);
 
+// @route   POST /api/auth/push-token
+// @desc    Enregistrer le token Expo pour notifications push
+// @access  Private
+router.post('/push-token', protect, authController.registerPushToken);
+
 // @route   PUT /api/auth/change-password
 // @desc    Changer le mot de passe
 // @access  Private

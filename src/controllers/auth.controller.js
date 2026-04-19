@@ -545,6 +545,56 @@ exports.updateProfile = async (req, res) => {
     });
   }
 };
+
+// ===============================================
+// 📣 ENREGISTRER LE TOKEN PUSH EXPO
+// ===============================================
+// @desc    Enregistrer le token Expo pour les notifications push
+// @route   POST /api/auth/push-token
+// @access  Private
+exports.registerPushToken = async (req, res) => {
+  try {
+    const { expoPushToken } = req.body || {};
+    const token = String(expoPushToken || '').trim();
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token Expo manquant'
+      });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Utilisateur non trouvé'
+      });
+    }
+
+    if (!Array.isArray(user.expoPushTokens)) {
+      user.expoPushTokens = [];
+    }
+
+    if (!user.expoPushTokens.includes(token)) {
+      user.expoPushTokens.push(token);
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Token push enregistré avec succès'
+    });
+  } catch (error) {
+    console.error('❌ Erreur enregistrement token push:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de l\'enregistrement du token push'
+    });
+  }
+};
 // ===============================================
 // 🔐 RÉINITIALISATION MOT DE PASSE
 // ===============================================
