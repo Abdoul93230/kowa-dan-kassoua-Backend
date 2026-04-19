@@ -577,9 +577,8 @@ exports.registerPushToken = async (req, res) => {
       user.expoPushTokens = [];
     }
 
-    if (!user.expoPushTokens.includes(token)) {
-      user.expoPushTokens.push(token);
-    }
+    // Garder uniquement le token le plus recent pour eviter les anciens tokens Expo Go.
+    user.expoPushTokens = [token];
 
     await user.save();
 
