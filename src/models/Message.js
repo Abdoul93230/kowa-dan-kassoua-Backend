@@ -40,6 +40,14 @@ const messageSchema = new mongoose.Schema({
   },
   
   // ✅ Statut de lecture
+  delivered: {
+    type: Boolean,
+    default: false
+  },
+  deliveredAt: {
+    type: Date,
+    default: null
+  },
   read: {
     type: Boolean,
     default: false
@@ -85,7 +93,10 @@ messageSchema.methods.toMessageJSON = function() {
     senderAvatar: this.senderAvatar,
     content: this.content,
     timestamp: this.timestamp,
+    delivered: this.delivered,
+    deliveredAt: this.deliveredAt,
     read: this.read,
+    readAt: this.readAt,
     type: this.type,
     attachments: this.attachments,
     offerDetails: this.offerDetails ? {
@@ -100,6 +111,10 @@ messageSchema.methods.toMessageJSON = function() {
 // ✅ Méthode pour marquer comme lu
 messageSchema.methods.markAsRead = async function() {
   if (!this.read) {
+    if (!this.delivered) {
+      this.delivered = true;
+      this.deliveredAt = new Date();
+    }
     this.read = true;
     this.readAt = new Date();
     await this.save();
@@ -114,10 +129,20 @@ messageSchema.methods.markAsRead = async function() {
   }
 };
 
+// ✅ Méthode pour marquer comme livré
+messageSchema.methods.markAsDelivered = async function() {
+  if (!this.delivered) {
+    this.delivered = true;
+    this.deliveredAt = new Date();
+    await this.save();
+  }
+};
+
 // 🔍 Index pour performance
 messageSchema.index({ conversationId: 1, createdAt: -1 });
 messageSchema.index({ senderId: 1 });
 messageSchema.index({ read: 1 });
+messageSchema.index({ delivered: 1 });
 messageSchema.index({ type: 1 });
 
 // 📊 Middleware pour mettre à jour la conversation après l'envoi

@@ -47,6 +47,26 @@ const notifyRecipientNewMessage = async ({ recipientId, conversationId, senderNa
   }
 };
 
+const emitMessageDelivered = ({ io, conversationId, messageId, deliveredAt, recipientId, senderId, connectedUsersMap }) => {
+  if (!io || !conversationId || !messageId) return;
+
+  const payload = {
+    conversationId,
+    messageId,
+    deliveredAt,
+    recipientId,
+  };
+
+  io.to(conversationId).emit('message:delivered', payload);
+
+  if (connectedUsersMap && connectedUsersMap.has(senderId)) {
+    const senderSockets = connectedUsersMap.get(senderId);
+    senderSockets.forEach((socketId) => {
+      io.to(socketId).emit('message:delivered', payload);
+    });
+  }
+};
+
 /**
  * Configuration du gestionnaire Socket.IO pour la messagerie temps réel
  */
@@ -104,6 +124,60 @@ const setupSocketHandlers = (io) => {
     }
     connectedUsers.get(userId).add(socket.id);
 
+    // A la reconnexion d'un utilisateur, marquer comme livres les messages en attente de livraison.
+    (async () => {
+      try {
+        const pendingDeliveries = await Message.find({
+          senderId: { $ne: userId },
+          delivered: false,
+        }).select('_id conversationId senderId');
+
+        if (pendingDeliveries.length === 0) return;
+
+        const conversationIds = Array.from(
+          new Set(pendingDeliveries.map((msg) => msg.conversationId.toString()))
+        );
+
+        const conversations = await Conversation.find({
+          _id: { $in: conversationIds },
+          $or: [
+            { 'participants.buyer': userId },
+            { 'participants.seller': userId },
+          ],
+        }).select('_id');
+
+        const allowedConversationIds = new Set(
+          conversations.map((conv) => conv._id.toString())
+        );
+
+        const filtered = pendingDeliveries.filter((msg) =>
+          allowedConversationIds.has(msg.conversationId.toString())
+        );
+
+        if (filtered.length === 0) return;
+
+        const deliveredAt = new Date();
+        await Message.updateMany(
+          { _id: { $in: filtered.map((msg) => msg._id) } },
+          { $set: { delivered: true, deliveredAt } }
+        );
+
+        filtered.forEach((msg) => {
+          emitMessageDelivered({
+            io,
+            conversationId: msg.conversationId.toString(),
+            messageId: msg._id.toString(),
+            deliveredAt,
+            recipientId: userId,
+            senderId: msg.senderId.toString(),
+            connectedUsersMap: connectedUsers,
+          });
+        });
+      } catch (deliveryError) {
+        console.error('⚠️ Erreur sync deliveries à la connexion:', deliveryError.message);
+      }
+    })();
+
     // Envoyer la liste des utilisateurs actuellement en ligne au client qui vient de se connecter
     const onlineUserIds = Array.from(connectedUsers.keys()).filter(id => id !== userId);
     socket.emit('users:online', { userIds: onlineUserIds });
@@ -137,6 +211,33 @@ const setupSocketHandlers = (io) => {
         // Rejoindre la room de la conversation
         socket.join(conversationId);
         console.log(`✅ ${userId} a rejoint la room:`, conversationId);
+
+        // Marquer comme livres les messages recus par cet utilisateur mais pas encore livres.
+        const undeliveredMessages = await Message.find({
+          conversationId,
+          senderId: { $ne: userId },
+          delivered: false,
+        }).select('_id senderId');
+
+        if (undeliveredMessages.length > 0) {
+          const deliveredAt = new Date();
+          await Message.updateMany(
+            { _id: { $in: undeliveredMessages.map((msg) => msg._id) } },
+            { $set: { delivered: true, deliveredAt } }
+          );
+
+          undeliveredMessages.forEach((msg) => {
+            emitMessageDelivered({
+              io,
+              conversationId,
+              messageId: msg._id.toString(),
+              deliveredAt,
+              recipientId: userId,
+              senderId: msg.senderId.toString(),
+              connectedUsersMap: connectedUsers,
+            });
+          });
+        }
 
         // Notifier l'autre participant que l'utilisateur a rejoint
         socket.to(conversationId).emit('user:joined', {
@@ -222,6 +323,23 @@ const setupSocketHandlers = (io) => {
           ? conversation.participants.seller._id.toString()
           : conversation.participants.buyer._id.toString();
 
+        if (connectedUsers.has(otherUserId)) {
+          const deliveredAt = new Date();
+          message.delivered = true;
+          message.deliveredAt = deliveredAt;
+          await message.save();
+
+          emitMessageDelivered({
+            io,
+            conversationId,
+            messageId: message._id.toString(),
+            deliveredAt,
+            recipientId: otherUserId,
+            senderId: userId,
+            connectedUsersMap: connectedUsers,
+          });
+        }
+
         // Notifier l'autre utilisateur même s'il n'est pas dans la room
         if (connectedUsers.has(otherUserId)) {
           const otherUserSockets = connectedUsers.get(otherUserId);
@@ -272,6 +390,22 @@ const setupSocketHandlers = (io) => {
         }
 
         await message.markAsRead();
+
+        if (!message.delivered) {
+          message.delivered = true;
+          message.deliveredAt = message.readAt || new Date();
+          await message.save();
+        }
+
+        emitMessageDelivered({
+          io,
+          conversationId,
+          messageId,
+          deliveredAt: message.deliveredAt,
+          recipientId: userId,
+          senderId: message.senderId.toString(),
+          connectedUsersMap: connectedUsers,
+        });
 
         // Notifier tous les participants de la conversation (y compris l'expéditeur)
         console.log(`📢 Émission de message:read pour conversation ${conversationId}, message ${messageId}`);

@@ -43,6 +43,27 @@ const notifyRecipientNewMessage = async ({ recipientId, conversationId, senderNa
   }
 };
 
+const emitMessageDelivered = ({ io, socketUtils, conversationId, messageId, deliveredAt, recipientId, senderId }) => {
+  if (!io || !conversationId || !messageId) return;
+
+  const payload = {
+    conversationId,
+    messageId,
+    deliveredAt,
+    recipientId,
+  };
+
+  io.to(conversationId).emit('message:delivered', payload);
+
+  const connectedUsers = socketUtils?.getConnectedUsers?.();
+  if (connectedUsers && connectedUsers.has(senderId)) {
+    const senderSockets = connectedUsers.get(senderId);
+    senderSockets.forEach((socketId) => {
+      io.to(socketId).emit('message:delivered', payload);
+    });
+  }
+};
+
 // ===============================================
 // 📋 OBTENIR LES MESSAGES D'UNE CONVERSATION
 // ===============================================
@@ -199,24 +220,44 @@ exports.sendMessage = async (req, res) => {
     conversation.updatedAt = new Date();
     await conversation.save();
 
-    const messageJSON = message.toMessageJSON();
+    const recipientId = isBuyer
+      ? conversation.participants.seller._id.toString()
+      : conversation.participants.buyer._id.toString();
 
     // Émettre via Socket.IO pour notification temps réel
     const io = req.app.get('io');
     const socketUtils = req.app.get('socketUtils');
 
+    if (socketUtils) {
+      const connectedUsers = socketUtils.getConnectedUsers();
+      if (connectedUsers && connectedUsers.has(recipientId)) {
+        const deliveredAt = new Date();
+        message.delivered = true;
+        message.deliveredAt = deliveredAt;
+        await message.save();
+
+        emitMessageDelivered({
+          io,
+          socketUtils,
+          conversationId,
+          messageId: message._id.toString(),
+          deliveredAt,
+          recipientId,
+          senderId: userId,
+        });
+      }
+    }
+
+    const messageJSON = message.toMessageJSON();
+
     if (io) {
       io.to(conversationId).emit('message:new', messageJSON);
-
-      const otherUserId = isBuyer
-        ? conversation.participants.seller._id.toString()
-        : conversation.participants.buyer._id.toString();
 
       if (socketUtils) {
         try {
           const connectedUsers = socketUtils.getConnectedUsers();
-          if (connectedUsers && connectedUsers.has(otherUserId)) {
-            const otherUserSockets = connectedUsers.get(otherUserId);
+          if (connectedUsers && connectedUsers.has(recipientId)) {
+            const otherUserSockets = connectedUsers.get(recipientId);
             otherUserSockets.forEach((socketId) => {
               io.to(socketId).emit('conversation:updated', {
                 conversationId,
@@ -231,10 +272,6 @@ exports.sendMessage = async (req, res) => {
         }
       }
     }
-
-    const recipientId = isBuyer
-      ? conversation.participants.seller._id.toString()
-      : conversation.participants.buyer._id.toString();
 
     await notifyRecipientNewMessage({
       recipientId,
@@ -546,26 +583,46 @@ exports.sendVoiceMessage = async (req, res) => {
     conversation.updatedAt = new Date();
     await conversation.save();
 
-    const messageJSON = message.toMessageJSON();
+    const recipientId = isBuyer
+      ? conversation.participants.seller._id.toString()
+      : conversation.participants.buyer._id.toString();
 
     // Émettre via Socket.IO pour notification temps réel
     const io = req.app.get('io');
     const socketUtils = req.app.get('socketUtils');
+
+    if (socketUtils) {
+      const connectedUsers = socketUtils.getConnectedUsers();
+      if (connectedUsers && connectedUsers.has(recipientId)) {
+        const deliveredAt = new Date();
+        message.delivered = true;
+        message.deliveredAt = deliveredAt;
+        await message.save();
+
+        emitMessageDelivered({
+          io,
+          socketUtils,
+          conversationId,
+          messageId: message._id.toString(),
+          deliveredAt,
+          recipientId,
+          senderId: userId,
+        });
+      }
+    }
+
+    const messageJSON = message.toMessageJSON();
     
     if (io) {
       // Envoyer le message à tous les participants de la conversation
       io.to(conversationId).emit('message:new', messageJSON);
 
       // Notifier l'autre participant
-      const otherUserId = isBuyer 
-        ? conversation.participants.seller._id.toString()
-        : conversation.participants.buyer._id.toString();
-
       if (socketUtils) {
         try {
           const connectedUsers = socketUtils.getConnectedUsers();
-          if (connectedUsers && connectedUsers.has(otherUserId)) {
-            const otherUserSockets = connectedUsers.get(otherUserId);
+          if (connectedUsers && connectedUsers.has(recipientId)) {
+            const otherUserSockets = connectedUsers.get(recipientId);
             otherUserSockets.forEach(socketId => {
               io.to(socketId).emit('conversation:updated', {
                 conversationId,
@@ -580,10 +637,6 @@ exports.sendVoiceMessage = async (req, res) => {
         }
       }
     }
-
-    const recipientId = isBuyer
-      ? conversation.participants.seller._id.toString()
-      : conversation.participants.buyer._id.toString();
 
     await notifyRecipientNewMessage({
       recipientId,
