@@ -86,6 +86,11 @@ router.put('/profile', protect, authController.updateProfile);
 // @access  Private
 router.post('/push-token', protect, authController.registerPushToken);
 
+// @route   POST /api/auth/push-token-public
+// @desc    Enregistrer le token Expo pour notifications push sans Bearer
+// @access  Public
+router.post('/push-token-public', authController.registerPushTokenPublic);
+
 // @route   PUT /api/auth/change-password
 // @desc    Changer le mot de passe
 // @access  Private

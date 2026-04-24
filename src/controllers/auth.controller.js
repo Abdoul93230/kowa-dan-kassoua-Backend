@@ -554,11 +554,12 @@ exports.updateProfile = async (req, res) => {
 // @access  Private
 exports.registerPushToken = async (req, res) => {
   try {
-    const { expoPushToken } = req.body || {};
+    const { expoPushToken, userId } = req.body || {};
     const token = String(expoPushToken || '').trim();
+    const resolvedUserId = req.user?.id || userId;
 
     console.log('📣 /auth/push-token called', {
-      userId: req.user?.id,
+      userId: resolvedUserId,
       tokenPreview: token ? token.substring(0, 24) + '...' : null,
     });
 
@@ -570,10 +571,18 @@ exports.registerPushToken = async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.user.id);
+    if (!resolvedUserId) {
+      console.log('⚠️ /auth/push-token refused: userId manquant');
+      return res.status(400).json({
+        success: false,
+        message: 'Utilisateur manquant'
+      });
+    }
+
+    const user = await User.findById(resolvedUserId);
 
     if (!user) {
-      console.log('⚠️ /auth/push-token refused: utilisateur introuvable', { userId: req.user?.id });
+      console.log('⚠️ /auth/push-token refused: utilisateur introuvable', { userId: resolvedUserId });
       return res.status(404).json({
         success: false,
         message: 'Utilisateur non trouvé'
@@ -590,7 +599,7 @@ exports.registerPushToken = async (req, res) => {
     await user.save();
 
     console.log('✅ /auth/push-token saved', {
-      userId: req.user?.id,
+      userId: resolvedUserId,
       tokensCount: user.expoPushTokens.length,
     });
 
@@ -600,6 +609,62 @@ exports.registerPushToken = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Erreur enregistrement token push:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de l\'enregistrement du token push'
+    });
+  }
+};
+
+// Version publique pour les builds internes/OTA quand l'auth header pose problème
+exports.registerPushTokenPublic = async (req, res) => {
+  try {
+    const { expoPushToken, userId } = req.body || {};
+    const token = String(expoPushToken || '').trim();
+
+    console.log('📣 /auth/push-token-public called', {
+      userId,
+      tokenPreview: token ? token.substring(0, 24) + '...' : null,
+    });
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token Expo manquant'
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Utilisateur manquant'
+      });
+    }
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      console.log('⚠️ /auth/push-token-public refused: utilisateur introuvable', { userId });
+      return res.status(404).json({
+        success: false,
+        message: 'Utilisateur non trouvé'
+      });
+    }
+
+    user.expoPushTokens = [token];
+    await user.save();
+
+    console.log('✅ /auth/push-token-public saved', {
+      userId,
+      tokensCount: user.expoPushTokens.length,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Token push enregistré avec succès'
+    });
+  } catch (error) {
+    console.error('❌ Erreur enregistrement token push public:', error);
     res.status(500).json({
       success: false,
       message: 'Erreur lors de l\'enregistrement du token push'
