@@ -111,7 +111,36 @@ const buildDealNotification = (actionName, conversation, actorUserId) => {
   return null;
 };
 
-const buildOwnerClosureNotification = (actionName, conversation, actorUserId) => {
+// Vérifier l'éligibilité de l'acheteur pour laisser un avis
+const checkReviewEligibilityForNotification = async (productId, buyerId) => {
+  try {
+    const Review = require('../models/Review');
+
+    // Vérifier si avis existe déjà
+    const existingReview = await Review.findOne({
+      user: buyerId,
+      item: productId,
+      type: 'product'
+    });
+
+    if (existingReview) {
+      return { eligible: false, reason: 'Avis déjà donné' };
+    }
+
+    // Vérifier que ce n'est pas le vendeur (vérifié ailleurs mais en sécurité)
+    const product = await Product.findById(productId);
+    if (product?.userId?.toString() === buyerId?.toString()) {
+      return { eligible: false, reason: 'Vendeur du produit' };
+    }
+
+    return { eligible: true, reason: 'Éligible' };
+  } catch (error) {
+    console.error('⚠️ Erreur vérification éligibilité notification:', error.message);
+    return { eligible: false, reason: 'Erreur' };
+  }
+};
+
+const buildOwnerClosureNotification = (actionName, conversation, actorUserId, eligibility = {}) => {
   const actorName = conversation?.participants?.seller?._id?.toString() === actorUserId
     ? conversation?.participants?.seller?.name || 'Le propriétaire'
     : conversation?.participants?.buyer?.name || 'Un utilisateur';
@@ -119,11 +148,19 @@ const buildOwnerClosureNotification = (actionName, conversation, actorUserId) =>
   const itemTitle = conversation?.item?.title ? ` pour "${conversation.item.title}"` : '';
 
   if (actionName === 'close') {
-    return {
+    const isReviewEligible = eligibility?.eligible === true;
+    const notification = {
       recipientId: conversation?.participants?.buyer?._id?.toString() || null,
-      title: 'Discussion clôturée',
-      body: `${actorName} a clôturé la discussion${itemTitle}. Vous pouvez continuer à discuter.`,
+      title: isReviewEligible ? '📝 Donnez votre avis!' : 'Discussion clôturée',
+      body: isReviewEligible
+        ? `${actorName} a clôturé la discussion${itemTitle}. Vous pouvez maintenant laisser votre avis!`
+        : `${actorName} a clôturé la discussion${itemTitle}. Vous pouvez continuer à discuter.`,
+      data: {
+        isReviewEligible,
+        productId: conversation?.item?.id?.toString() || conversation?.item?.toString() || null,
+      }
     };
+    return notification;
   }
 
   if (actionName === 'reopen') {
@@ -632,7 +669,12 @@ exports.closeConversationByOwner = async (req, res) => {
 
     await emitConversationUpdate(req, conversation, userId);
 
-    const notification = buildOwnerClosureNotification('close', conversation, userId);
+    // Vérifier l'éligibilité de l'acheteur pour laisser un avis
+    const buyerId = conversation?.participants?.buyer?._id?.toString();
+    const productId = conversation?.item?.id?.toString() || conversation?.item?.toString();
+    const eligibility = await checkReviewEligibilityForNotification(productId, buyerId);
+
+    const notification = buildOwnerClosureNotification('close', conversation, userId, eligibility);
     if (notification?.recipientId) {
       try {
         const recipient = await User.findById(notification.recipientId).select('expoPushTokens name');
@@ -643,9 +685,11 @@ exports.closeConversationByOwner = async (req, res) => {
           title: notification.title,
           body: notification.body,
           data: {
-            type: 'conversation_closed',
+            type: eligibility.eligible ? 'review_invitation' : 'conversation_closed',
             conversationId: conversation._id.toString(),
             closedByOwner: true,
+            productId: notification.data.productId,
+            isReviewEligible: eligibility.eligible,
           }
         });
       } catch (pushError) {

@@ -5,12 +5,16 @@ const {
   getProductReviews,
   deleteReview,
   markHelpful,
-  getReviewStats
+  getReviewStats,
+  checkEligibility
 } = require('../controllers/review.controller');
 const { protect } = require('../middleware/auth');
 
 // ✍️ Créer un avis (authentification requise)
 router.post('/', protect, createReview);
+
+// ✅ Vérifier l'éligibilité (authentification requise)
+router.get('/eligibility/:productId', protect, checkEligibility);
 
 // 📋 Récupérer les avis d'un produit (public)
 router.get('/product/:productId', getProductReviews);

@@ -292,3 +292,90 @@ exports.getReviewStats = async (req, res) => {
     });
   }
 };
+
+// ===============================================
+// ✅ VÉRIFIER L'ÉLIGIBILITÉ DE L'UTILISATEUR
+// ===============================================
+// @desc    Vérifier si l'utilisateur peut laisser un avis
+// @route   GET /api/reviews/eligibility/:productId
+// @access  Private (authentifié)
+exports.checkEligibility = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const userId = req.user.id;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({
+        success: false,
+        eligible: false,
+        reason: 'ID produit invalide'
+      });
+    }
+
+    // Vérifier que le produit existe
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        eligible: false,
+        reason: 'Produit introuvable'
+      });
+    }
+
+    // Vérifier si l'utilisateur a déjà laissé un avis
+    const existingReview = await Review.findOne({
+      user: userId,
+      item: productId,
+      type: 'product'
+    });
+
+    if (existingReview) {
+      return res.status(200).json({
+        success: true,
+        eligible: false,
+        reason: 'Vous avez déjà laissé un avis pour ce produit'
+      });
+    }
+
+    // Vérifier si l'utilisateur est le vendeur du produit
+    if (product.userId.toString() === userId) {
+      return res.status(200).json({
+        success: true,
+        eligible: false,
+        reason: 'Vous ne pouvez pas évaluer votre propre produit'
+      });
+    }
+
+    // Vérifier si l'utilisateur a une conversation fermée par le vendeur avec ce produit
+    const Conversation = require('../models/Conversation');
+    const closedConversation = await Conversation.findOne({
+      product: productId,
+      participants: userId,
+      closedByOwner: true
+    });
+
+    if (!closedConversation) {
+      return res.status(200).json({
+        success: true,
+        eligible: false,
+        reason: 'Vous devez avoir échangé sur cet article dans une conversation fermée par le vendeur'
+      });
+    }
+
+    // L'utilisateur est éligible
+    res.status(200).json({
+      success: true,
+      eligible: true,
+      reason: 'Vous pouvez laisser un avis'
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur vérification éligibilité:', error);
+    res.status(500).json({
+      success: false,
+      eligible: false,
+      message: 'Erreur lors de la vérification de l\'éligibilité',
+      error: error.message
+    });
+  }
+};
