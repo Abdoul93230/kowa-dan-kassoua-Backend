@@ -338,7 +338,7 @@ exports.checkEligibility = async (req, res) => {
     }
 
     // Vérifier si l'utilisateur est le vendeur du produit
-    if (product.userId.toString() === userId) {
+    if (product.seller && product.seller.toString() === userId)  {
       return res.status(200).json({
         success: true,
         eligible: false,
