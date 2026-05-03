@@ -182,6 +182,7 @@ exports.sendMessage = async (req, res) => {
 
     // Récupérer les infos de l'expéditeur
     const sender = isBuyer ? conversation.participants.buyer : conversation.participants.seller;
+    const isPostClosure = Boolean(conversation.closedByOwner);
 
     // Créer le message
     const message = await Message.create({
@@ -194,7 +195,8 @@ exports.sendMessage = async (req, res) => {
       attachments,
       offerDetails,
       timestamp: new Date().toISOString(),
-      read: false
+      read: false,
+      postClosure: isPostClosure,
     });
 
     console.log('✅ Message créé:', message._id);
@@ -210,7 +212,8 @@ exports.sendMessage = async (req, res) => {
       deliveredAt: null,
       read: false,
       readAt: null,
-      type: message.type
+      type: message.type,
+      postClosure: isPostClosure
     };
 
     // Incrémenter le compteur de non-lus pour le destinataire
@@ -562,6 +565,7 @@ exports.sendVoiceMessage = async (req, res) => {
 
     // Créer le message vocal
     const sender = isBuyer ? conversation.participants.buyer : conversation.participants.seller;
+    const isPostClosure = Boolean(conversation.closedByOwner);
     const message = await Message.create({
       conversationId,
       senderId: userId,
@@ -571,7 +575,8 @@ exports.sendVoiceMessage = async (req, res) => {
       type: 'audio',
       attachments: [audioUrl], // URL de l'audio
       timestamp: new Date().toISOString(),
-      read: false
+      read: false,
+      postClosure: isPostClosure,
     });
 
     // Mettre à jour la conversation
@@ -585,7 +590,8 @@ exports.sendVoiceMessage = async (req, res) => {
       deliveredAt: null,
       read: false,
       readAt: null,
-      type: 'audio'
+      type: 'audio',
+      postClosure: isPostClosure
     };
 
     // Incrémenter le compteur de non-lus pour le destinataire

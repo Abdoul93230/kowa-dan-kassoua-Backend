@@ -26,6 +26,9 @@ const emitConversationUpdate = async (req, conversation, userId) => {
         ? conversation.unreadCount.buyer
         : conversation.unreadCount.seller,
       status: conversation.status,
+      closedByOwner: Boolean(conversation.closedByOwner),
+      closedAt: conversation.closedAt || null,
+      closedById: conversation.closedById ? conversation.closedById.toString() : null,
       deal: {
         status: conversation.deal?.status || DEAL_STATUS.OPEN,
         requestedBy: conversation.deal?.requestedBy ? conversation.deal.requestedBy.toString() : null,
@@ -102,6 +105,32 @@ const buildDealNotification = (actionName, conversation, actorUserId) => {
       recipientId: conversation?.participants?.buyer?._id?.toString() || null,
       title: 'Conversation rouverte',
       body: `${actorName} a rouvert la conversation${itemTitle}.`,
+    };
+  }
+
+  return null;
+};
+
+const buildOwnerClosureNotification = (actionName, conversation, actorUserId) => {
+  const actorName = conversation?.participants?.seller?._id?.toString() === actorUserId
+    ? conversation?.participants?.seller?.name || 'Le propriétaire'
+    : conversation?.participants?.buyer?.name || 'Un utilisateur';
+
+  const itemTitle = conversation?.item?.title ? ` pour "${conversation.item.title}"` : '';
+
+  if (actionName === 'close') {
+    return {
+      recipientId: conversation?.participants?.buyer?._id?.toString() || null,
+      title: 'Discussion clôturée',
+      body: `${actorName} a clôturé la discussion${itemTitle}. Vous pouvez continuer à discuter.`,
+    };
+  }
+
+  if (actionName === 'reopen') {
+    return {
+      recipientId: conversation?.participants?.buyer?._id?.toString() || null,
+      title: 'Discussion rouverte',
+      body: `${actorName} a rouvert la discussion${itemTitle}.`,
     };
   }
 
@@ -569,6 +598,148 @@ exports.archiveConversation = async (req, res) => {
       success: false,
       message: 'Erreur lors de l\'archivage de la conversation',
       error: error.message
+    });
+  }
+};
+
+// ===============================================
+// 🔒 CLÔTURER UNE CONVERSATION PAR LE PROPRIÉTAIRE
+// ===============================================
+// @route   PUT /api/conversations/:id/close-owner
+// @access  Private
+exports.closeConversationByOwner = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const conversation = await Conversation.findById(id)
+      .populate('participants.buyer', 'name avatar')
+      .populate('participants.seller', 'name avatar');
+
+    if (!conversation) {
+      return res.status(404).json({ success: false, message: 'Conversation introuvable' });
+    }
+
+    const isSeller = conversation.participants.seller?._id?.toString() === userId;
+    if (!isSeller) {
+      return res.status(403).json({ success: false, message: 'Seul le propriétaire de l’article peut clôturer la discussion' });
+    }
+
+    conversation.closedByOwner = true;
+    conversation.closedAt = new Date();
+    conversation.closedById = userId;
+    await conversation.save();
+
+    await emitConversationUpdate(req, conversation, userId);
+
+    const notification = buildOwnerClosureNotification('close', conversation, userId);
+    if (notification?.recipientId) {
+      try {
+        const recipient = await User.findById(notification.recipientId).select('expoPushTokens name');
+        const tokens = Array.isArray(recipient?.expoPushTokens) ? recipient.expoPushTokens : [];
+
+        await sendExpoPushNotifications({
+          tokens,
+          title: notification.title,
+          body: notification.body,
+          data: {
+            type: 'conversation_closed',
+            conversationId: conversation._id.toString(),
+            closedByOwner: true,
+          }
+        });
+      } catch (pushError) {
+        console.error('⚠️ Erreur envoi notification clôture:', pushError.message);
+      }
+    }
+
+    const refreshed = await Conversation.findById(id)
+      .populate('participants.buyer', 'name avatar phone email')
+      .populate('participants.seller', 'name avatar phone email location rating totalReviews verified businessType')
+      .populate('item.id', 'title mainImage price status');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Conversation clôturée',
+      data: await refreshed.toConversationJSON(userId),
+    });
+  } catch (error) {
+    console.error('❌ Erreur clôture conversation:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la clôture de la conversation',
+      error: error.message,
+    });
+  }
+};
+
+// ===============================================
+// 🔓 ROUVRIR UNE CONVERSATION PAR LE PROPRIÉTAIRE
+// ===============================================
+// @route   PUT /api/conversations/:id/reopen-owner
+// @access  Private
+exports.reopenConversationByOwner = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const conversation = await Conversation.findById(id)
+      .populate('participants.buyer', 'name avatar')
+      .populate('participants.seller', 'name avatar');
+
+    if (!conversation) {
+      return res.status(404).json({ success: false, message: 'Conversation introuvable' });
+    }
+
+    const isSeller = conversation.participants.seller?._id?.toString() === userId;
+    if (!isSeller) {
+      return res.status(403).json({ success: false, message: 'Seul le propriétaire de l’article peut rouvrir la discussion' });
+    }
+
+    conversation.closedByOwner = false;
+    conversation.closedAt = null;
+    conversation.closedById = null;
+    await conversation.save();
+
+    await emitConversationUpdate(req, conversation, userId);
+
+    const notification = buildOwnerClosureNotification('reopen', conversation, userId);
+    if (notification?.recipientId) {
+      try {
+        const recipient = await User.findById(notification.recipientId).select('expoPushTokens name');
+        const tokens = Array.isArray(recipient?.expoPushTokens) ? recipient.expoPushTokens : [];
+
+        await sendExpoPushNotifications({
+          tokens,
+          title: notification.title,
+          body: notification.body,
+          data: {
+            type: 'conversation_reopened',
+            conversationId: conversation._id.toString(),
+            closedByOwner: false,
+          }
+        });
+      } catch (pushError) {
+        console.error('⚠️ Erreur envoi notification réouverture:', pushError.message);
+      }
+    }
+
+    const refreshed = await Conversation.findById(id)
+      .populate('participants.buyer', 'name avatar phone email')
+      .populate('participants.seller', 'name avatar phone email location rating totalReviews verified businessType')
+      .populate('item.id', 'title mainImage price status');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Conversation rouverte',
+      data: await refreshed.toConversationJSON(userId),
+    });
+  } catch (error) {
+    console.error('❌ Erreur réouverture conversation:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la réouverture de la conversation',
+      error: error.message,
     });
   }
 };

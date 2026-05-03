@@ -8,6 +8,8 @@ const {
   markConversationAsRead,
   updateConversationDeal,
   archiveConversation,
+  closeConversationByOwner,
+  reopenConversationByOwner,
   getUnreadCount
 } = require('../controllers/conversation.controller');
 
@@ -43,6 +45,16 @@ router.put('/:id/read', markConversationAsRead);
 // @desc    Mettre à jour le statut de l'affaire
 // @access  Private
 router.put('/:id/deal', updateConversationDeal);
+
+// @route   PUT /api/conversations/:id/close-owner
+// @desc    Clôturer une conversation par le propriétaire
+// @access  Private
+router.put('/:id/close-owner', closeConversationByOwner);
+
+// @route   PUT /api/conversations/:id/reopen-owner
+// @desc    Rouvrir une conversation par le propriétaire
+// @access  Private
+router.put('/:id/reopen-owner', reopenConversationByOwner);
 
 // @route   DELETE /api/conversations/:id
 // @desc    Archiver une conversation

@@ -78,6 +78,12 @@ const messageSchema = new mongoose.Schema({
     itemTitle: String,
     itemImage: String,
     price: String
+  },
+
+  // 🔒 Message envoyé après clôture par le propriétaire
+  postClosure: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true
@@ -99,6 +105,7 @@ messageSchema.methods.toMessageJSON = function() {
     readAt: this.readAt,
     type: this.type,
     attachments: this.attachments,
+    postClosure: Boolean(this.postClosure),
     offerDetails: this.offerDetails ? {
       itemId: this.offerDetails.itemId?.toString(),
       itemTitle: this.offerDetails.itemTitle,

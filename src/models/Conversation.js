@@ -53,6 +53,10 @@ const conversationSchema = new mongoose.Schema({
       type: String,
       enum: ['text', 'image', 'audio', 'offer'],
       default: 'text'
+    },
+    postClosure: {
+      type: Boolean,
+      default: false
     }
   },
   
@@ -104,6 +108,21 @@ const conversationSchema = new mongoose.Schema({
       type: String,
       default: ''
     }
+  },
+
+  // 🔒 Clôture unilatérale par le propriétaire de l'annonce
+  closedByOwner: {
+    type: Boolean,
+    default: false
+  },
+  closedAt: {
+    type: Date,
+    default: null
+  },
+  closedById: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
   }
 }, {
   timestamps: true
@@ -148,6 +167,9 @@ conversationSchema.methods.toConversationJSON = async function(userId) {
     createdAt: this.createdAt ? this.createdAt.toISOString() : new Date().toISOString(),
     updatedAt: this.updatedAt ? this.updatedAt.toISOString() : new Date().toISOString(),
     status: this.status,
+    closedByOwner: Boolean(this.closedByOwner),
+    closedAt: this.closedAt ? this.closedAt.toISOString() : null,
+    closedById: this.closedById ? this.closedById.toString() : null,
     deal: {
       status: this.deal?.status || 'open',
       requestedBy: this.deal?.requestedBy ? this.deal.requestedBy.toString() : null,
@@ -171,7 +193,8 @@ conversationSchema.methods.updateLastMessage = async function(message) {
     deliveredAt: message.deliveredAt || null,
     read: message.read,
     readAt: message.readAt || null,
-    type: message.type
+    type: message.type,
+    postClosure: Boolean(message.postClosure)
   };
   this.updatedAt = new Date();
   

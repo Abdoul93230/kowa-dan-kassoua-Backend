@@ -277,6 +277,7 @@ const setupSocketHandlers = (io) => {
 
         // Créer le message dans la BD
         const sender = isBuyer ? conversation.participants.buyer : conversation.participants.seller;
+        const isPostClosure = Boolean(conversation.closedByOwner);
         const message = await Message.create({
           conversationId,
           senderId: userId,
@@ -287,7 +288,8 @@ const setupSocketHandlers = (io) => {
           attachments,
           offerDetails,
           timestamp: new Date().toISOString(),
-          read: false
+          read: false,
+          postClosure: isPostClosure
         });
 
         // Mettre à jour la conversation
@@ -301,7 +303,8 @@ const setupSocketHandlers = (io) => {
           deliveredAt: null,
           read: false,
           readAt: null,
-          type: message.type
+          type: message.type,
+          postClosure: isPostClosure
         };
 
         // Incrémenter le compteur de non-lus pour le destinataire
