@@ -110,10 +110,55 @@ exports.getMessages = async (req, res) => {
       Message.countDocuments({ conversationId })
     ]);
 
-    console.log(`✅ ${messages.length} message(s) trouvé(s)`);
+    const closureHistoryMessages = Array.isArray(conversation.closureHistory)
+      ? conversation.closureHistory.map((entry) => ({
+          _id: entry.messageId,
+          conversationId,
+          senderId: entry.actorId,
+          senderName: entry.actorName,
+          senderAvatar: null,
+          content: entry.content,
+          timestamp: entry.timestamp,
+          delivered: true,
+          deliveredAt: null,
+          read: true,
+          readAt: null,
+          type: 'system',
+          attachments: [],
+          postClosure: false,
+          toMessageJSON() {
+            return {
+              id: String(this._id),
+              conversationId: String(this.conversationId),
+              senderId: String(this.senderId),
+              senderName: this.senderName,
+              senderAvatar: this.senderAvatar,
+              content: this.content,
+              timestamp: this.timestamp,
+              delivered: this.delivered,
+              deliveredAt: this.deliveredAt,
+              read: this.read,
+              readAt: this.readAt,
+              type: this.type,
+              attachments: this.attachments,
+              postClosure: this.postClosure,
+            };
+          }
+        }))
+      : [];
+
+    const fetchedIds = new Set(messages.map((msg) => msg._id.toString()));
+    const missingHistoryMessages = closureHistoryMessages.filter(
+      (entry) => !fetchedIds.has(String(entry._id))
+    );
+
+    const combinedMessages = [...messages, ...missingHistoryMessages]
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    console.log(`✅ ${combinedMessages.length} message(s) trouvé(s)`);
 
     // Transformer en format frontend
-    const messagesJSON = messages.map(msg => msg.toMessageJSON());
+    const messagesJSON = combinedMessages.map((msg) => (typeof msg.toMessageJSON === 'function' ? msg.toMessageJSON() : msg));
 
     res.status(200).json({
       success: true,
