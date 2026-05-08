@@ -338,7 +338,8 @@ exports.checkEligibility = async (req, res) => {
     }
 
     // Vérifier si l'utilisateur est le vendeur du produit
-    if (product.seller && product.seller.toString() === userId)  {
+    const sellerId = product.seller?.toString?.() || product.userId?.toString?.() || product.owner?.toString?.();
+    if (sellerId && sellerId === userId) {
       return res.status(200).json({
         success: true,
         eligible: false,
@@ -349,9 +350,12 @@ exports.checkEligibility = async (req, res) => {
     // Vérifier si l'utilisateur a une conversation fermée par le vendeur avec ce produit
     const Conversation = require('../models/Conversation');
     const closedConversation = await Conversation.findOne({
-      product: productId,
-      participants: userId,
-      closedByOwner: true
+      'item.id': productId,
+      closedByOwner: true,
+      $or: [
+        { 'participants.buyer': userId },
+        { 'participants.seller': userId }
+      ]
     });
 
     if (!closedConversation) {

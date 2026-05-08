@@ -51,7 +51,7 @@ const conversationSchema = new mongoose.Schema({
     },
     type: {
       type: String,
-      enum: ['text', 'image', 'audio', 'offer'],
+      enum: ['text', 'image', 'audio', 'offer', 'system'],
       default: 'text'
     },
     postClosure: {
@@ -197,13 +197,15 @@ conversationSchema.methods.updateLastMessage = async function(message) {
     postClosure: Boolean(message.postClosure)
   };
   this.updatedAt = new Date();
-  
-  // Incrémenter unread pour le destinataire
-  const isSenderBuyer = message.senderId.toString() === this.participants.buyer.toString();
-  if (isSenderBuyer) {
-    this.unreadCount.seller += 1;
-  } else {
-    this.unreadCount.buyer += 1;
+
+  if (message.type !== 'system') {
+    // Incrémenter unread pour le destinataire
+    const isSenderBuyer = message.senderId.toString() === this.participants.buyer.toString();
+    if (isSenderBuyer) {
+      this.unreadCount.seller += 1;
+    } else {
+      this.unreadCount.buyer += 1;
+    }
   }
   
   await this.save();

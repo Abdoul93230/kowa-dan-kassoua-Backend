@@ -7,6 +7,19 @@ const normalizeEmail = (value = '') => String(value || '').trim().toLowerCase();
 const normalizePhone = (value = '') => String(value || '').trim().replace(/\s+/g, ' ');
 const escapeRegExp = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const isCloudinaryUrl = (value = '') => /^https?:\/\//i.test(String(value || '').trim());
+
+const resolveAvatarUrl = async (avatar, phone, folder = 'kowa/avatars') => {
+  if (!avatar || !String(avatar).trim()) return null;
+
+  const trimmedAvatar = String(avatar).trim();
+  if (isCloudinaryUrl(trimmedAvatar)) {
+    return trimmedAvatar;
+  }
+
+  return uploadImage(trimmedAvatar, folder, `user_${String(phone || '').replace(/\s+/g, '')}`);
+};
+
 // 🔐 Générer Access Token (JWT)
 const generateAccessToken = (userId) => {
   return jwt.sign(
@@ -87,10 +100,7 @@ exports.register = async (req, res) => {
       }
       
       // 📤 Upload avatar sur Cloudinary si fourni
-      let avatarUrl = null;
-      if (avatar) {
-        avatarUrl = await uploadImage(avatar, 'kowa/avatars', `user_${phone.replace(/\s+/g, '')}`);
-      }
+      const avatarUrl = await resolveAvatarUrl(avatar, phone, 'kowa/avatars');
       
       // ✅ Définir businessName par défaut pour les comptes individuels
       const finalBusinessName = businessName || (businessType === 'individual' ? name : '');
@@ -165,10 +175,7 @@ exports.register = async (req, res) => {
     }
 
     // 📤 Upload avatar sur Cloudinary si fourni
-    let avatarUrl = null;
-    if (avatar) {
-      avatarUrl = await uploadImage(avatar, 'kowa/avatars', `user_${phone.replace(/\s+/g, '')}`);
-    }
+    const avatarUrl = await resolveAvatarUrl(avatar, phone, 'kowa/avatars');
     
     // ✅ Définir businessName par défaut pour les comptes individuels
     const finalBusinessName = businessName || (businessType === 'individual' ? name : '');
@@ -476,7 +483,7 @@ exports.updateProfile = async (req, res) => {
     }
 
     if (typeof avatar === 'string' && avatar.trim()) {
-      user.avatar = avatar.trim();
+      user.avatar = await resolveAvatarUrl(avatar, user.phone, 'kowa/avatars');
     }
 
     // ✉️ Email (vérifier unicité si changé)

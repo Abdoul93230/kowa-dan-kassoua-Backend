@@ -60,7 +60,7 @@ const messageSchema = new mongoose.Schema({
   // 🎯 Type de message
   type: {
     type: String,
-    enum: ['text', 'image', 'audio', 'offer'],
+    enum: ['text', 'image', 'audio', 'offer', 'system'],
     default: 'text'
   },
   
@@ -155,6 +155,10 @@ messageSchema.index({ type: 1 });
 // 📊 Middleware pour mettre à jour la conversation après l'envoi
 messageSchema.post('save', async function() {
   if (this.isNew) {
+    if (this.type === 'system') {
+      return;
+    }
+
     const Conversation = mongoose.model('Conversation');
     const conversation = await Conversation.findById(this.conversationId);
     if (conversation) {

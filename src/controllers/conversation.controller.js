@@ -174,6 +174,31 @@ const buildOwnerClosureNotification = (actionName, conversation, actorUserId, el
   return null;
 };
 
+const createClosureSystemMessage = async (conversation, actorUserId, actionName) => {
+  const actor = conversation?.participants?.seller?._id?.toString() === actorUserId
+    ? conversation?.participants?.seller
+    : conversation?.participants?.buyer;
+
+  const content = actionName === 'close'
+    ? 'Discussion clôturée'
+    : 'Discussion rouverte';
+
+  const message = await Message.create({
+    conversationId: conversation._id,
+    senderId: actorUserId,
+    senderName: actor?.name || 'Utilisateur',
+    senderAvatar: actor?.avatar || null,
+    content,
+    type: 'system',
+    timestamp: new Date().toISOString(),
+    read: false,
+    delivered: false,
+    postClosure: false,
+  });
+
+  return message.toMessageJSON();
+};
+
 // ===============================================
 // 📋 OBTENIR TOUTES LES CONVERSATIONS D'UN UTILISATEUR
 // ===============================================
@@ -667,7 +692,19 @@ exports.closeConversationByOwner = async (req, res) => {
     conversation.closedById = userId;
     await conversation.save();
 
-    await emitConversationUpdate(req, conversation, userId);
+    const systemMessage = await createClosureSystemMessage(conversation, userId, 'close');
+
+    const refreshedConversation = await Conversation.findById(id)
+      .populate('participants.buyer', 'name avatar phone email')
+      .populate('participants.seller', 'name avatar phone email location rating totalReviews verified businessType')
+      .populate('item.id', 'title mainImage price status');
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(conversation._id.toString()).emit('message:new', systemMessage);
+    }
+
+    await emitConversationUpdate(req, refreshedConversation, userId);
 
     // Vérifier l'éligibilité de l'acheteur pour laisser un avis
     const buyerId = conversation?.participants?.buyer?._id?.toString();
@@ -697,15 +734,10 @@ exports.closeConversationByOwner = async (req, res) => {
       }
     }
 
-    const refreshed = await Conversation.findById(id)
-      .populate('participants.buyer', 'name avatar phone email')
-      .populate('participants.seller', 'name avatar phone email location rating totalReviews verified businessType')
-      .populate('item.id', 'title mainImage price status');
-
     return res.status(200).json({
       success: true,
       message: 'Conversation clôturée',
-      data: await refreshed.toConversationJSON(userId),
+      data: await refreshedConversation.toConversationJSON(userId),
     });
   } catch (error) {
     console.error('❌ Erreur clôture conversation:', error);
@@ -745,7 +777,19 @@ exports.reopenConversationByOwner = async (req, res) => {
     conversation.closedById = null;
     await conversation.save();
 
-    await emitConversationUpdate(req, conversation, userId);
+    const systemMessage = await createClosureSystemMessage(conversation, userId, 'reopen');
+
+    const refreshedConversation = await Conversation.findById(id)
+      .populate('participants.buyer', 'name avatar phone email')
+      .populate('participants.seller', 'name avatar phone email location rating totalReviews verified businessType')
+      .populate('item.id', 'title mainImage price status');
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(conversation._id.toString()).emit('message:new', systemMessage);
+    }
+
+    await emitConversationUpdate(req, refreshedConversation, userId);
 
     const notification = buildOwnerClosureNotification('reopen', conversation, userId);
     if (notification?.recipientId) {
@@ -768,15 +812,10 @@ exports.reopenConversationByOwner = async (req, res) => {
       }
     }
 
-    const refreshed = await Conversation.findById(id)
-      .populate('participants.buyer', 'name avatar phone email')
-      .populate('participants.seller', 'name avatar phone email location rating totalReviews verified businessType')
-      .populate('item.id', 'title mainImage price status');
-
     return res.status(200).json({
       success: true,
       message: 'Conversation rouverte',
-      data: await refreshed.toConversationJSON(userId),
+      data: await refreshedConversation.toConversationJSON(userId),
     });
   } catch (error) {
     console.error('❌ Erreur réouverture conversation:', error);

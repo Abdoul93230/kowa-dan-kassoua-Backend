@@ -37,8 +37,8 @@ app.use(cors({
 }));
 app.use(compression()); // Compress responses
 app.use(morgan('dev')); // Logging
-app.use(express.json({ limit: '10mb' })); // Parse JSON - Augmenté pour les images base64
-app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Parse URL-encoded
+app.use(express.json({ limit: '20mb' })); // Parse JSON - marge pour les avatars encodés
+app.use(express.urlencoded({ extended: true, limit: '20mb' })); // Parse URL-encoded
 
 // Make io accessible in routes
 app.set('io', io);
