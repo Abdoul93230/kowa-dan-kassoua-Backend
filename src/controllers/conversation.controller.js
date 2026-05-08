@@ -199,6 +199,27 @@ const createClosureSystemMessage = async (conversation, actorUserId, actionName)
   return message.toMessageJSON();
 };
 
+const appendClosureHistory = async (conversation, systemMessage, actionName, actorUserId) => {
+  if (!conversation || !systemMessage) return conversation;
+
+  const actor = conversation?.participants?.seller?._id?.toString() === actorUserId
+    ? conversation?.participants?.seller
+    : conversation?.participants?.buyer;
+
+  conversation.closureHistory = Array.isArray(conversation.closureHistory) ? conversation.closureHistory : [];
+  conversation.closureHistory.push({
+    action: actionName,
+    messageId: systemMessage.id,
+    content: systemMessage.content,
+    timestamp: systemMessage.timestamp,
+    actorId: actorUserId,
+    actorName: actor?.name || 'Utilisateur',
+  });
+
+  await conversation.save();
+  return conversation;
+};
+
 // ===============================================
 // 📋 OBTENIR TOUTES LES CONVERSATIONS D'UN UTILISATEUR
 // ===============================================
@@ -693,6 +714,7 @@ exports.closeConversationByOwner = async (req, res) => {
     await conversation.save();
 
     const systemMessage = await createClosureSystemMessage(conversation, userId, 'close');
+    await appendClosureHistory(conversation, systemMessage, 'close', userId);
 
     const refreshedConversation = await Conversation.findById(id)
       .populate('participants.buyer', 'name avatar phone email')
@@ -778,6 +800,7 @@ exports.reopenConversationByOwner = async (req, res) => {
     await conversation.save();
 
     const systemMessage = await createClosureSystemMessage(conversation, userId, 'reopen');
+    await appendClosureHistory(conversation, systemMessage, 'reopen', userId);
 
     const refreshedConversation = await Conversation.findById(id)
       .populate('participants.buyer', 'name avatar phone email')

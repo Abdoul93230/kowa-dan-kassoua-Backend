@@ -123,7 +123,36 @@ const conversationSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     default: null
-  }
+  },
+  closureHistory: [{
+    action: {
+      type: String,
+      enum: ['close', 'reopen'],
+      required: true
+    },
+    messageId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Message',
+      required: true
+    },
+    content: {
+      type: String,
+      required: true
+    },
+    timestamp: {
+      type: String,
+      required: true
+    },
+    actorId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    actorName: {
+      type: String,
+      required: true
+    }
+  }]
 }, {
   timestamps: true
 });
@@ -170,6 +199,16 @@ conversationSchema.methods.toConversationJSON = async function(userId) {
     closedByOwner: Boolean(this.closedByOwner),
     closedAt: this.closedAt ? this.closedAt.toISOString() : null,
     closedById: this.closedById ? this.closedById.toString() : null,
+    closureHistory: Array.isArray(this.closureHistory)
+      ? this.closureHistory.map((entry) => ({
+          action: entry.action,
+          messageId: entry.messageId ? entry.messageId.toString() : null,
+          content: entry.content,
+          timestamp: entry.timestamp,
+          actorId: entry.actorId ? entry.actorId.toString() : null,
+          actorName: entry.actorName,
+        }))
+      : [],
     deal: {
       status: this.deal?.status || 'open',
       requestedBy: this.deal?.requestedBy ? this.deal.requestedBy.toString() : null,
