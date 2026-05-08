@@ -98,61 +98,22 @@ exports.getMessages = async (req, res) => {
       });
     }
 
-    // Récupérer les messages avec pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // Récupérer les N messages les plus récents (page 1 = dernière tranche)
+    const lim = parseInt(limit);
+    const pg = parseInt(page);
+    const total = await Message.countDocuments({ conversationId });
+    // skip depuis la fin pour charger les messages récents en premier
+    const skipFromEnd = (pg - 1) * lim;
+    const skipFromStart = Math.max(0, total - lim * pg);
+    const actualLimit = total - skipFromStart - skipFromEnd;
 
-    const [messages, total] = await Promise.all([
-      Message.find({ conversationId })
-        .sort({ createdAt: 1 }) // Ordre chronologique
-        .skip(skip)
-        .limit(parseInt(limit))
-        .populate('senderId', 'name avatar'),
-      Message.countDocuments({ conversationId })
-    ]);
+    const messages = await Message.find({ conversationId })
+      .sort({ createdAt: 1 })
+      .skip(skipFromStart)
+      .limit(actualLimit > 0 ? actualLimit : lim)
+      .populate('senderId', 'name avatar');
 
-    const closureHistoryMessages = Array.isArray(conversation.closureHistory)
-      ? conversation.closureHistory.map((entry) => ({
-          _id: entry.messageId,
-          conversationId,
-          senderId: entry.actorId,
-          senderName: entry.actorName,
-          senderAvatar: null,
-          content: entry.content,
-          timestamp: entry.timestamp,
-          delivered: true,
-          deliveredAt: null,
-          read: true,
-          readAt: null,
-          type: 'system',
-          attachments: [],
-          postClosure: false,
-          toMessageJSON() {
-            return {
-              id: String(this._id),
-              conversationId: String(this.conversationId),
-              senderId: String(this.senderId),
-              senderName: this.senderName,
-              senderAvatar: this.senderAvatar,
-              content: this.content,
-              timestamp: this.timestamp,
-              delivered: this.delivered,
-              deliveredAt: this.deliveredAt,
-              read: this.read,
-              readAt: this.readAt,
-              type: this.type,
-              attachments: this.attachments,
-              postClosure: this.postClosure,
-            };
-          }
-        }))
-      : [];
-
-    const fetchedIds = new Set(messages.map((msg) => msg._id.toString()));
-    const missingHistoryMessages = closureHistoryMessages.filter(
-      (entry) => !fetchedIds.has(String(entry._id))
-    );
-
-    const combinedMessages = [...messages, ...missingHistoryMessages]
+    const combinedMessages = messages
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     console.log(`✅ ${combinedMessages.length} message(s) trouvé(s)`);
@@ -164,10 +125,11 @@ exports.getMessages = async (req, res) => {
       success: true,
       data: messagesJSON,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: pg,
+        limit: lim,
         total,
-        pages: Math.ceil(total / parseInt(limit))
+        pages: Math.ceil(total / lim),
+        hasMore: skipFromStart > 0,
       }
     });
 
