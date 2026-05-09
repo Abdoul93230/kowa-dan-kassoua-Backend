@@ -1,7 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const authController = require('../controllers/auth.controller');
 const { protect } = require('../middleware/auth');
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 // ===============================================
 // 📝 ROUTES PUBLIQUES
@@ -79,7 +82,7 @@ router.get('/me', protect, authController.getMe);
 // @route   PUT /api/auth/profile
 // @desc    Mettre à jour profil utilisateur
 // @access  Private
-router.put('/profile', protect, authController.updateProfile);
+router.put('/profile', protect, upload.single('avatar'), authController.updateProfile);
 
 // @route   POST /api/auth/push-token
 // @desc    Enregistrer le token Expo pour notifications push

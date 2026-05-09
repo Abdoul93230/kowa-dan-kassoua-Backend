@@ -85,8 +85,50 @@ const uploadMultipleImages = async (base64Images, folder = 'kowa', publicIdPrefi
   }
 };
 
+/**
+ * 📤 Upload une image depuis un buffer (multipart/form-data)
+ * @param {Buffer} buffer - Buffer de l'image
+ * @param {string} folder - Dossier Cloudinary
+ * @param {string} publicId - ID public optionnel
+ * @returns {Promise<string>} URL de l'image uploadée
+ */
+const uploadImageBuffer = (buffer, folder = 'kowa', publicId = null) => {
+  return new Promise((resolve, reject) => {
+    if (!process.env.CLOUDINARY_CLOUD_NAME ||
+        process.env.CLOUDINARY_CLOUD_NAME === 'your_cloud_name') {
+      reject(new Error('Cloudinary n\'est pas configuré'));
+      return;
+    }
+
+    const uploadOptions = {
+      folder,
+      resource_type: 'auto',
+      transformation: [
+        { width: 800, height: 800, crop: 'limit' },
+        { quality: 'auto:good' },
+        { fetch_format: 'auto' }
+      ]
+    };
+
+    if (publicId) uploadOptions.public_id = publicId;
+
+    const stream = cloudinary.uploader.upload_stream(uploadOptions, (error, result) => {
+      if (error) {
+        console.error('❌ Erreur upload Cloudinary (buffer):', error.message);
+        reject(new Error(`Erreur upload Cloudinary: ${error.message}`));
+      } else {
+        console.log('✅ Image uploadée sur Cloudinary:', result.secure_url);
+        resolve(result.secure_url);
+      }
+    });
+
+    stream.end(buffer);
+  });
+};
+
 module.exports = {
   uploadImage,
+  uploadImageBuffer,
   deleteImage,
   uploadMultipleImages
 };

@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Product = require('../models/Product');
-const { uploadImage } = require('../utils/uploadImage');
+const { uploadImage, uploadImageBuffer } = require('../utils/uploadImage');
 
 const normalizeEmail = (value = '') => String(value || '').trim().toLowerCase();
 const normalizePhone = (value = '') => String(value || '').trim().replace(/\s+/g, ' ');
@@ -463,7 +463,7 @@ exports.getMe = async (req, res) => {
 // @access  Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { name, city, avatar, email, description, businessType, businessName, whatsapp } = req.body;
+    const { name, city, location, avatar, email, description, businessType, businessName, whatsapp } = req.body;
     const user = await User.findById(req.user.id);
 
     if (!user) {
@@ -477,12 +477,20 @@ exports.updateProfile = async (req, res) => {
       user.name = name.trim();
     }
 
-    // Le schéma User stocke la ville dans "location".
-    if (typeof city === 'string' && city.trim()) {
-      user.location = city.trim();
+    // Accepter "location" ou "city"
+    const cityValue = location || city;
+    if (typeof cityValue === 'string' && cityValue.trim()) {
+      user.location = cityValue.trim();
     }
 
-    if (typeof avatar === 'string' && avatar.trim()) {
+    // Avatar depuis upload multipart (req.file) ou chaîne base64/URL dans le body
+    if (req.file) {
+      user.avatar = await uploadImageBuffer(
+        req.file.buffer,
+        'kowa/avatars',
+        `user_${String(user.phone || '').replace(/\s+/g, '')}`
+      );
+    } else if (typeof avatar === 'string' && avatar.trim()) {
       user.avatar = await resolveAvatarUrl(avatar, user.phone, 'kowa/avatars');
     }
 
