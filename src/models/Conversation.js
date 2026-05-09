@@ -186,10 +186,10 @@ conversationSchema.methods.toConversationJSON = async function(userId) {
           }
     },
     item: this.item.id ? {
-      id: this.item.id.toString(),
-      title: this.item.title,
-      image: this.item.image,
-      price: this.item.price
+      id: (this.item.id._id || this.item.id).toString(),
+      title: this.item.id.title || this.item.title,
+      image: this.item.id.mainImage || this.item.image,
+      price: this.item.id.price || this.item.price
     } : null,
     lastMessage: this.lastMessage,
     unreadCount: unread,
