@@ -243,6 +243,7 @@ userSchema.methods.toAuthJSON = function() {
     businessType: this.businessType,
     location: this.location,
     description: this.description, // On garde le nom original du champ pour le front
+    whatsapp: this.contactInfo?.whatsapp || this.phone,
     contactInfo: {
       whatsapp: this.contactInfo?.whatsapp || this.phone,
       website: this.contactInfo?.website,

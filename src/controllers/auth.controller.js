@@ -463,6 +463,8 @@ exports.getMe = async (req, res) => {
 // @access  Private
 exports.updateProfile = async (req, res) => {
   try {
+    console.log('📝 updateProfile - req.file:', req.file ? `${req.file.originalname} (${req.file.size} bytes)` : 'ABSENT');
+    console.log('📝 updateProfile - req.body keys:', Object.keys(req.body));
     const { name, city, location, avatar, email, description, businessType, businessName, whatsapp } = req.body;
     const user = await User.findById(req.user.id);
 
