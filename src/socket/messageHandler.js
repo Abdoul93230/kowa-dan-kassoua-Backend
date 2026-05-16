@@ -479,12 +479,13 @@ const setupSocketHandlers = (io) => {
     // ✍️ UTILISATEUR EN TRAIN DE TAPER
     // ===============================================
     socket.on('typing:start', (data) => {
-      const { conversationId } = data;
+      const { conversationId, type } = data;
       console.log(`✍️ ${userId} commence à taper dans:`, conversationId);
       socket.to(conversationId).emit('typing:start', {
         userId,
         userName: socket.userData.name,
-        conversationId
+        conversationId,
+        type: type || 'text',
       });
     });
 
