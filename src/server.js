@@ -20,10 +20,15 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
+// Origines autorisées — liste séparée par des virgules dans FRONTEND_URL
+const ALLOWED_ORIGINS = (process.env.FRONTEND_URL || 'http://localhost:3000')
+  .split(',')
+  .map(o => o.trim());
+
 // Initialize Socket.io
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST'],
     credentials: true
   }
@@ -32,7 +37,7 @@ const io = new Server(server, {
 // Middleware
 app.use(helmet()); // Security headers
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: ALLOWED_ORIGINS,
   credentials: true
 }));
 app.use(compression()); // Compress responses
