@@ -72,3 +72,6 @@ logs/
 # Cache
 .cache/
 .parcel-cache/
+migrate-1-cloudinary-to-new.js
+migrate-2-mongodb-to-new.js
+migration-cloudinary-mapping.json
