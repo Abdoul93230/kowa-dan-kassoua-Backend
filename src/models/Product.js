@@ -229,8 +229,17 @@ productSchema.methods.toItemJSON = async function () {
     rating: this.rating,
     totalReviews: this.totalReviews,
     seller: this.seller.toSellerJSON ? await (async () => {
-      const totalListings = await this.constructor.countDocuments({ seller: this.seller._id, status: 'active' });
-      return this.seller.toSellerJSON(totalListings);
+      const sellerProducts = await this.constructor
+        .find({ seller: this.seller._id, status: 'active' })
+        .select('rating totalReviews');
+      const totalListings = sellerProducts.length;
+      const totalReviews = sellerProducts.reduce((sum, p) => sum + (Number(p.totalReviews) || 0), 0);
+      const weightedRating = sellerProducts.reduce((sum, p) => sum + (Number(p.rating) || 0) * (Number(p.totalReviews) || 0), 0);
+      const avgRating = totalReviews > 0 ? weightedRating / totalReviews : 0;
+      const sellerJson = this.seller.toSellerJSON(totalListings);
+      sellerJson.rating = avgRating;
+      sellerJson.totalReviews = totalReviews;
+      return sellerJson;
     })() : {
       id: this.seller._id.toString(),
       name: this.seller.name,
