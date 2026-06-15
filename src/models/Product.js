@@ -228,7 +228,10 @@ productSchema.methods.toItemJSON = async function () {
     type: this.type,
     rating: this.rating,
     totalReviews: this.totalReviews,
-    seller: this.seller.toSellerJSON ? await this.seller.toSellerJSON() : {
+    seller: this.seller.toSellerJSON ? await (async () => {
+      const totalListings = await this.constructor.countDocuments({ seller: this.seller._id, status: 'active' });
+      return this.seller.toSellerJSON(totalListings);
+    })() : {
       id: this.seller._id.toString(),
       name: this.seller.name,
       avatar: this.seller.avatar
