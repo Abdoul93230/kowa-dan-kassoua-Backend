@@ -15,11 +15,23 @@ exports.getCategories = async (req, res) => {
     const categories = await Category.find(filter)
       .sort('order name')
       .select('-__v');
-    
+
+    // Garantir que la sous-catégorie "Autres" est toujours en dernière position
+    const sorted = categories.map(cat => {
+      const subs = [...cat.subcategories];
+      const autresIdx = subs.findIndex(s => s.slug === 'autres');
+      if (autresIdx > -1 && autresIdx !== subs.length - 1) {
+        const [autres] = subs.splice(autresIdx, 1);
+        subs.push(autres);
+        cat.subcategories = subs;
+      }
+      return cat;
+    });
+
     res.status(200).json({
       success: true,
-      data: categories,
-      count: categories.length
+      data: sorted,
+      count: sorted.length
     });
   } catch (error) {
     console.error('❌ Erreur getCategories:', error);
@@ -41,14 +53,23 @@ exports.getCategoryBySlug = async (req, res) => {
     
     const category = await Category.findOne({ slug, active: true })
       .select('-__v');
-    
+
     if (!category) {
       return res.status(404).json({
         success: false,
         message: 'Catégorie non trouvée'
       });
     }
-    
+
+    // Garantir que la sous-catégorie "Autres" est toujours en dernière position
+    const subs = [...category.subcategories];
+    const autresIdx = subs.findIndex(s => s.slug === 'autres');
+    if (autresIdx > -1 && autresIdx !== subs.length - 1) {
+      const [autres] = subs.splice(autresIdx, 1);
+      subs.push(autres);
+      category.subcategories = subs;
+    }
+
     res.status(200).json({
       success: true,
       data: category

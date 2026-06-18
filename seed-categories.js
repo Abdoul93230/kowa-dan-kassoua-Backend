@@ -27,7 +27,8 @@ const categoriesData = [
       { name: 'Ordinateurs', slug: 'ordinateurs', description: 'PC portables et de bureau', icon: 'Laptop' },
       { name: 'Tablettes', slug: 'tablettes', description: 'Tablettes tactiles', icon: 'Tablet' },
       { name: 'Accessoires', slug: 'accessoires', description: 'Écouteurs, chargeurs, coques...', icon: 'Headphones' },
-      { name: 'Services IT', slug: 'services-it', description: 'Réparation, maintenance informatique', icon: 'Wrench' }
+      { name: 'Services IT', slug: 'services-it', description: 'Réparation, maintenance informatique', icon: 'Wrench' },
+      { name: 'Autres', slug: 'autres', description: 'Autres produits électroniques', icon: 'MoreHorizontal' }
     ]
   },
   {
@@ -42,7 +43,8 @@ const categoriesData = [
       { name: 'Produits frais', slug: 'produits-frais', description: 'Fruits, légumes, viandes', icon: 'Apple' },
       { name: 'Traiteur', slug: 'traiteur', description: 'Services traiteur événements', icon: 'ChefHat' },
       { name: 'Pâtisserie', slug: 'patisserie', description: 'Gâteaux et pâtisseries', icon: 'Cake' },
-      { name: 'Épicerie', slug: 'epicerie', description: 'Produits alimentaires divers', icon: 'ShoppingBasket' }
+      { name: 'Épicerie', slug: 'epicerie', description: 'Produits alimentaires divers', icon: 'ShoppingBasket' },
+      { name: 'Autres', slug: 'autres', description: 'Autres produits alimentaires', icon: 'MoreHorizontal' }
     ]
   },
   {
@@ -57,7 +59,8 @@ const categoriesData = [
       { name: 'Vente maisons', slug: 'vente-maisons', description: 'Maisons à vendre', icon: 'Home' },
       { name: 'Terrains', slug: 'terrains', description: 'Terrains à vendre', icon: 'Trees' },
       { name: 'Bureaux', slug: 'bureaux', description: 'Locaux commerciaux et bureaux', icon: 'Building2' },
-      { name: 'Services', slug: 'services', description: 'Agents immobiliers, notaires', icon: 'Briefcase' }
+      { name: 'Services', slug: 'services', description: 'Agents immobiliers, notaires', icon: 'Briefcase' },
+      { name: 'Autres', slug: 'autres', description: 'Autres biens immobiliers', icon: 'MoreHorizontal' }
     ]
   },
   {
@@ -71,7 +74,8 @@ const categoriesData = [
       { name: 'Voitures', slug: 'voitures', description: 'Voitures d\'occasion et neuves', icon: 'Car' },
       { name: 'Motos', slug: 'motos', description: 'Motos et scooters', icon: 'Bike' },
       { name: 'Pièces détachées', slug: 'pieces', description: 'Pièces auto et moto', icon: 'Settings' },
-      { name: 'Services auto', slug: 'services-auto', description: 'Garages, réparation', icon: 'Wrench' }
+      { name: 'Services auto', slug: 'services-auto', description: 'Garages, réparation', icon: 'Wrench' },
+      { name: 'Autres', slug: 'autres', description: 'Autres véhicules et équipements', icon: 'MoreHorizontal' }
     ]
   },
   {
@@ -86,7 +90,8 @@ const categoriesData = [
       { name: 'Vêtements hommes', slug: 'vetements-hommes', description: 'Mode masculine', icon: 'ShirtIcon' },
       { name: 'Accessoires', slug: 'accessoires', description: 'Sacs, bijoux, montres', icon: 'Watch' },
       { name: 'Soins beauté', slug: 'soins-beaute', description: 'Cosmétiques et soins', icon: 'Sparkles' },
-      { name: 'Coiffure', slug: 'coiffure', description: 'Salons de coiffure', icon: 'Scissors' }
+      { name: 'Coiffure', slug: 'coiffure', description: 'Salons de coiffure', icon: 'Scissors' },
+      { name: 'Autres', slug: 'autres', description: 'Autres articles mode et beauté', icon: 'MoreHorizontal' }
     ]
   },
   {
@@ -101,7 +106,7 @@ const categoriesData = [
       { name: 'Plomberie', slug: 'plomberie', description: 'Plombiers professionnels', icon: 'Droplet' },
       { name: 'Électricité', slug: 'electricite', description: 'Électriciens certifiés', icon: 'Zap' },
       { name: 'Jardinage', slug: 'jardinage', description: 'Entretien espaces verts', icon: 'Trees' },
-      { name: 'Autres services', slug: 'autres', description: 'Services divers', icon: 'MoreHorizontal' }
+      { name: 'Autres', slug: 'autres', description: 'Autres services divers', icon: 'MoreHorizontal' }
     ]
   },
   {
@@ -115,7 +120,8 @@ const categoriesData = [
       { name: 'Meubles', slug: 'meubles', description: 'Canapés, tables, armoires', icon: 'Armchair' },
       { name: 'Décoration', slug: 'decoration', description: 'Objets déco, tableaux', icon: 'Palette' },
       { name: 'Électroménager', slug: 'electromenager', description: 'Appareils électroménagers', icon: 'Microwave' },
-      { name: 'Jardin', slug: 'jardin', description: 'Outils et équipements jardin', icon: 'Trees' }
+      { name: 'Jardin', slug: 'jardin', description: 'Outils et équipements jardin', icon: 'Trees' },
+      { name: 'Autres', slug: 'autres', description: 'Autres articles maison et jardin', icon: 'MoreHorizontal' }
     ]
   },
   {
@@ -129,7 +135,8 @@ const categoriesData = [
       { name: 'CDI', slug: 'cdi', description: 'Contrats à durée indéterminée', icon: 'Briefcase' },
       { name: 'CDD', slug: 'cdd', description: 'Contrats à durée déterminée', icon: 'Calendar' },
       { name: 'Stage', slug: 'stage', description: 'Offres de stage', icon: 'GraduationCap' },
-      { name: 'Freelance', slug: 'freelance', description: 'Missions freelance', icon: 'Laptop' }
+      { name: 'Freelance', slug: 'freelance', description: 'Missions freelance', icon: 'Laptop' },
+      { name: 'Autres', slug: 'autres', description: 'Autres offres d\'emploi', icon: 'MoreHorizontal' }
     ]
   },
   {
@@ -143,7 +150,8 @@ const categoriesData = [
       { name: 'Sport', slug: 'sport', description: 'Équipements sportifs', icon: 'Dumbbell' },
       { name: 'Jeux vidéo', slug: 'jeux-video', description: 'Consoles et jeux', icon: 'Gamepad2' },
       { name: 'Livres', slug: 'livres', description: 'Livres et magazines', icon: 'Book' },
-      { name: 'Musique', slug: 'musique', description: 'Instruments et matériel audio', icon: 'Music' }
+      { name: 'Musique', slug: 'musique', description: 'Instruments et matériel audio', icon: 'Music' },
+      { name: 'Autres', slug: 'autres', description: 'Autres loisirs et divertissements', icon: 'MoreHorizontal' }
     ]
   },
   {
@@ -156,8 +164,18 @@ const categoriesData = [
     subcategories: [
       { name: 'Construction', slug: 'construction', description: 'Matériaux de construction', icon: 'Brick' },
       { name: 'Outillage', slug: 'outillage', description: 'Outils professionnels', icon: 'Hammer' },
-      { name: 'Équipements pro', slug: 'equipements-pro', description: 'Matériel professionnel', icon: 'Factory' }
+      { name: 'Équipements pro', slug: 'equipements-pro', description: 'Matériel professionnel', icon: 'Factory' },
+      { name: 'Autres', slug: 'autres', description: 'Autres matériaux et équipements', icon: 'MoreHorizontal' }
     ]
+  },
+  {
+    name: 'Autres',
+    slug: 'autres',
+    description: 'Annonces et services ne correspondant pas aux autres catégories',
+    icon: 'MoreHorizontal',
+    color: 'bg-gray-100 text-gray-600',
+    order: 99,
+    subcategories: []
   }
 ];
 
