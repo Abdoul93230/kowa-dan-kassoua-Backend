@@ -47,6 +47,11 @@ router.get('/locations', productController.getLocations);
 // @access  Private
 router.post('/', protect, productController.createProduct);
 
+// @route   GET /api/products/search/suggestions
+// @desc    Suggestions de recherche
+// @access  Public
+router.get('/search/suggestions', productController.getSearchSuggestions);
+
 // @route   GET /api/products/:id
 // @desc    Détails d'un produit
 // @access  Public

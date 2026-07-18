@@ -249,16 +249,15 @@ exports.getProducts = async (req, res) => {
         { seller: { $in: sellerIds } }
       ];
 
-      // 🔎 Recherche par texte (titre + description) - regex pour correspondances partielles
+      // 🔎 Recherche par texte (titre + description) - tous les mots doivent correspondre
       if (search) {
-        const searchRegex = new RegExp(search, 'i');
-        filter.$and = filter.$and || [];
-        filter.$and.push({
-          $or: [
-            { title: searchRegex },
-            { description: searchRegex }
-          ]
+        const words = search.trim().split(/\s+/);
+        const wordConditions = words.map(word => {
+          const wordRegex = new RegExp(word, 'i');
+          return { $or: [{ title: wordRegex }, { description: wordRegex }] };
         });
+        filter.$and = filter.$and || [];
+        filter.$and.push(...wordConditions);
       }
 
       // 📊 Exécuter la requête avec filtre de localisation
@@ -299,19 +298,30 @@ exports.getProducts = async (req, res) => {
     if (condition) filter.condition = condition;
     if (seller) filter.seller = seller;
 
-    // 🔎 Recherche par texte (titre + description) - regex pour correspondances partielles
+    // 🔎 Recherche par texte (titre + description) - tous les mots doivent correspondre
     if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      filter.$or = [
-        { title: searchRegex },
-        { description: searchRegex }
-      ];
+      const words = search.trim().split(/\s+/);
+      const wordConditions = words.map(word => {
+        const wordRegex = new RegExp(word, 'i');
+        return { $or: [{ title: wordRegex }, { description: wordRegex }] };
+      });
+      filter.$and = wordConditions;
     }
 
-    // 💰 Filtrage par prix (conversion string → number)
+    // 💰 Filtrage par prix (conversion string → number via $expr)
     if (minPrice || maxPrice) {
-      // Note: Prix stocké en string, nécessite conversion côté frontend
-      // ou utilisation de MongoDB aggregation pour conversion
+      const priceConditions = [];
+      if (minPrice) {
+        priceConditions.push({ $gte: [{ $toDouble: '$price' }, parseFloat(minPrice)] });
+      }
+      if (maxPrice) {
+        priceConditions.push({ $lte: [{ $toDouble: '$price' }, parseFloat(maxPrice)] });
+      }
+      if (priceConditions.length === 1) {
+        filter.$expr = priceConditions[0];
+      } else {
+        filter.$expr = { $and: priceConditions };
+      }
     }
 
     // 📊 Exécuter la requête
@@ -330,6 +340,24 @@ exports.getProducts = async (req, res) => {
     const productsJSON = await Promise.all(
       products.map(product => product.toItemJSON())
     );
+
+    // 🔀 Tri par pertinence quand une recherche est active
+    if (search && sort === '-createdAt') {
+      const searchLower = search.toLowerCase();
+      productsJSON.sort((a, b) => {
+        const aTitle = (a.title || '').toLowerCase();
+        const bTitle = (b.title || '').toLowerCase();
+        const aExact = aTitle === searchLower;
+        const bExact = bTitle === searchLower;
+        if (aExact && !bExact) return -1;
+        if (!aExact && bExact) return 1;
+        const aPartial = aTitle.includes(searchLower);
+        const bPartial = bTitle.includes(searchLower);
+        if (aPartial && !bPartial) return -1;
+        if (!aPartial && bPartial) return 1;
+        return 0;
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -988,6 +1016,72 @@ exports.getActiveSellers = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Erreur lors de la récupération des vendeurs actifs',
+      error: error.message
+    });
+  }
+};
+
+// ===============================================
+// 🔍 SUGGESTIONS DE RECHERCHE
+// ===============================================
+// @desc    Suggestions de recherche (catégories + produits)
+// @route   GET /api/products/search/suggestions?q=xxx
+// @access  Public
+exports.getSearchSuggestions = async (req, res) => {
+  try {
+    const { q } = req.query;
+
+    if (!q || q.trim().length < 2) {
+      return res.status(200).json({
+        success: true,
+        data: { recent: [], popular: [], categories: [], products: [] }
+      });
+    }
+
+    const query = q.trim();
+    const queryRegex = new RegExp(query, 'i');
+
+    // Popular searches (hardcoded for now, can be replaced with analytics later)
+    const popularSearches = [
+      'Téléphones', 'Voitures', 'Immobilier', 'Vêtements', 'Électronique',
+      'Meubles', 'Services', 'Motos', 'Ordinateurs', 'Accessoires'
+    ];
+    const popular = popularSearches.filter(s => queryRegex.test(s)).slice(0, 5);
+
+    // Categories matching the query
+    const categories = await Category.find(
+      { name: queryRegex },
+      { _id: 1, name: 1, slug: 1, icon: 1 }
+    ).limit(5).lean();
+
+    // Products matching the query (lightweight)
+    const products = await Product.find(
+      { title: queryRegex, status: 'active' },
+      { _id: 1, title: 1, price: 1, mainImage: 1 }
+    ).limit(5).lean();
+
+    const formattedProducts = products.map(p => ({
+      id: p._id,
+      title: p.title,
+      price: p.price,
+      mainImage: p.mainImage
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        recent: [], // Recent searches are handled client-side via AsyncStorage
+        popular,
+        categories,
+        products: formattedProducts
+      }
+    });
+
+  } catch (error) {
+    console.error('Error getting search suggestions:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la récupération des suggestions',
       error: error.message
     });
   }
