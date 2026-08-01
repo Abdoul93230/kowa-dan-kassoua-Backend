@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Product = require('../models/Product');
 const { uploadImage, uploadImageBuffer } = require('../utils/uploadImage');
+const smsService = require('../services/lafricaMobileSmsService');
 
 const normalizeEmail = (value = '') => String(value || '').trim().toLowerCase();
 const normalizePhone = (value = '') => String(value || '').trim().replace(/\s+/g, ' ');
@@ -741,8 +742,21 @@ exports.forgotPassword = async (req, res) => {
     };
     await user.save();
 
-    // TODO: Envoyer le code par SMS (si téléphone) ou email (si email)
-    console.log(`📧 Code de réinitialisation pour ${normalizedIdentifier}:`, resetCode);
+    // 📤 Envoyer le code par SMS (si téléphone)
+    if (!isEmail) {
+      try {
+        await smsService.sendSms({
+          to: normalizedIdentifier,
+          text: `TakTak - Code de reinitialisation : ${resetCode}. Valable 10 minutes.`,
+        });
+        console.log(`📱 SMS réinitialisation envoyé au ${normalizedIdentifier}`);
+      } catch (smsErr) {
+        console.error(`⚠️ Échec envoi SMS reset (${smsErr.code || smsErr.message})`);
+      }
+    } else {
+      // Email — TODO: intégrer envoi email
+      console.log(`📧 Code de réinitialisation pour ${normalizedIdentifier}:`, resetCode);
+    }
 
     res.status(200).json({
       success: true,
@@ -1051,11 +1065,17 @@ exports.sendOTP = async (req, res) => {
       });
     }
     
-    // 📤 ENVOYER LE SMS (À IMPLÉMENTER)
-    // TODO: Intégrer un provider SMS (Twilio, Vonage, AfricasTalking, etc.)
-    // await sendSMS(phone, `Votre code de vérification: ${otpCode}`);
-    
-    console.log(`📱 OTP envoyé au ${phone}: ${otpCode}`);
+    // 📤 Envoyer le code par SMS
+    try {
+      await smsService.sendSms({
+        to: phone,
+        text: `TakTak - Votre code de verification est : ${otpCode}. Valable 10 minutes.`,
+      });
+      console.log(`📱 OTP SMS envoyé au ${phone}`);
+    } catch (smsErr) {
+      console.error(`⚠️ Échec envoi SMS OTP (${smsErr.code || smsErr.message})`);
+      // On continue même si le SMS échoue en dev — l'OTP est dans la réponse dev
+    }
 
     res.status(200).json({
       success: true,
@@ -1324,8 +1344,15 @@ exports.quickRegister = async (req, res) => {
     user.refreshToken = refreshToken;
     await user.save();
 
-    // TODO: Envoyer le mot de passe temporaire par SMS
-    // await sendSMS(phone, `Votre mot de passe temporaire MarketHub: ${tempPassword}. Changez-le dans votre profil.`);
+    // 📤 Envoyer le mot de passe temporaire par SMS
+    try {
+      await smsService.sendSms({
+        to: phone,
+        text: `TakTak - Votre mot de passe temporaire : ${tempPassword}. Changez-le dans votre profil.`,
+      });
+    } catch (smsErr) {
+      console.error(`⚠️ Échec envoi SMS mot de passe temporaire (${smsErr.code || smsErr.message})`);
+    }
 
     res.status(201).json({
       success: true,
