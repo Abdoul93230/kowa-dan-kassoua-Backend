@@ -1453,3 +1453,80 @@ exports.changePassword = async (req, res) => {
     });
   }
 };
+
+// @route   DELETE /api/auth/account
+// @desc    Supprimer définitivement le compte de l'utilisateur connecté
+// @access  Private
+exports.deleteAccount = async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Utilisateur non trouvé'
+      });
+    }
+
+    console.log(`🗑️ Demande de suppression de compte: ${user.phone}`);
+
+    // 1. Supprimer toutes les annonces du vendeur
+    const Product = require('../models/Product');
+    const deletedProducts = await Product.deleteMany({ seller: userId });
+    console.log(`   → ${deletedProducts.deletedCount} annonce(s) supprimée(s)`);
+
+    // 2. Supprimer les favoris de l'utilisateur
+    const Favorite = require('../models/Favorite');
+    const deletedFavorites = await Favorite.deleteMany({ user: userId });
+    console.log(`   → ${deletedFavorites.deletedCount} favori(s) supprimé(s)`);
+
+    // 3. Supprimer les avis laissés par l'utilisateur ET les avis le concernant
+    const Review = require('../models/Review');
+    const deletedReviews = await Review.deleteMany({
+      $or: [{ user: userId }, { item: userId, type: 'seller' }]
+    });
+    console.log(`   → ${deletedReviews.deletedCount} avis supprimé(s)`);
+
+    // 4. Supprimer les messages et conversations de l'utilisateur
+    const Message = require('../models/Message');
+    const Conversation = require('../models/Conversation');
+
+    const conversations = await Conversation.find({
+      $or: [
+        { 'participants.buyer': userId },
+        { 'participants.seller': userId }
+      ]
+    });
+
+    const conversationIds = conversations.map(c => c._id);
+    const deletedMessages = await Message.deleteMany({
+      conversationId: { $in: conversationIds }
+    });
+    console.log(`   → ${deletedMessages.deletedCount} message(s) supprimé(s)`);
+
+    const deletedConversations = await Conversation.deleteMany({
+      $or: [
+        { 'participants.buyer': userId },
+        { 'participants.seller': userId }
+      ]
+    });
+    console.log(`   → ${deletedConversations.deletedCount} conversation(s) supprimée(s)`);
+
+    // 5. Supprimer le compte utilisateur
+    await user.deleteOne();
+    console.log(`✅ Compte supprimé définitivement: ${user.phone}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Votre compte et toutes vos données ont été supprimés définitivement.'
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur delete-account:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la suppression du compte'
+    });
+  }
+};

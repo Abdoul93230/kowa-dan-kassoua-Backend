@@ -99,4 +99,9 @@ router.post('/push-token-public', authController.registerPushTokenPublic);
 // @access  Private
 router.put('/change-password', protect, authController.changePassword);
 
+// @route   DELETE /api/auth/account
+// @desc    Supprimer définitivement le compte utilisateur (conformité Google Play / App Store)
+// @access  Private
+router.delete('/account', protect, authController.deleteAccount);
+
 module.exports = router;
