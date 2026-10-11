@@ -2,11 +2,15 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  // 📱 Authentification (phone ou email selon formulaire login)
+  // 📱 Authentification (phone ou email — au moins l'un des deux)
   phone: {
     type: String,
-    required: [true, 'Le numéro de téléphone est obligatoire'],
+    required: [
+      function () { return !this.email; },
+      'Le numéro de téléphone ou l\'email est obligatoire'
+    ],
     unique: true,
+    sparse: true,  // Comptes créés par email : pas de téléphone
     trim: true,
     // Format: "+227 12345678" (avec indicatif pays)
   },
@@ -243,9 +247,9 @@ userSchema.methods.toAuthJSON = function() {
     businessType: this.businessType,
     location: this.location,
     description: this.description, // On garde le nom original du champ pour le front
-    whatsapp: this.contactInfo?.whatsapp || this.phone,
+    whatsapp: this.contactInfo?.whatsapp || this.phone || '',
     contactInfo: {
-      whatsapp: this.contactInfo?.whatsapp || this.phone,
+      whatsapp: this.contactInfo?.whatsapp || this.phone || '',
       website: this.contactInfo?.website,
       facebook: this.contactInfo?.facebook,
       instagram: this.contactInfo?.instagram

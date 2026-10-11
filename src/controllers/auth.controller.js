@@ -3,14 +3,52 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const { uploadImage, uploadImageBuffer } = require('../utils/uploadImage');
 const smsService = require('../services/lafricaMobileSmsService');
+const emailService = require('../services/emailService');
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const normalizeEmail = (value = '') => String(value || '').trim().toLowerCase();
 const normalizePhone = (value = '') => String(value || '').trim().replace(/\s+/g, ' ');
 const escapeRegExp = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// 🪪 Identifiant d'authentification : téléphone (prioritaire) ou email
+const resolveIdentity = ({ phone, email } = {}) => {
+  const normalizedPhone = normalizePhone(phone);
+  if (normalizedPhone) {
+    return { channel: 'phone', value: normalizedPhone, query: { phone: normalizedPhone } };
+  }
+  const normalizedEmail = normalizeEmail(email);
+  if (normalizedEmail) {
+    return { channel: 'email', value: normalizedEmail, query: { email: normalizedEmail } };
+  }
+  return null;
+};
+
+// 📤 Envoyer un message via le canal de l'identifiant (SMS ou email)
+// Les échecs sont journalisés sans bloquer la réponse (le code reste visible en dev)
+const deliverToIdentity = async (identity, { smsText, sendEmail }) => {
+  try {
+    if (identity.channel === 'email') {
+      await sendEmail(identity.value);
+      console.log(`📧 Email envoyé à ${identity.value}`);
+    } else {
+      await smsService.sendSms({ to: identity.value, text: smsText });
+      console.log(`📱 SMS envoyé au ${identity.value}`);
+    }
+  } catch (err) {
+    console.error(`⚠️ Échec envoi ${identity.channel === 'email' ? 'email' : 'SMS'} (${err.code || err.message})`);
+  }
+};
+
 const isCloudinaryUrl = (value = '') => /^https?:\/\//i.test(String(value || '').trim());
 
-const resolveAvatarUrl = async (avatar, phone, folder = 'kowa/avatars') => {
+const avatarPublicId = ({ phone, email, _id } = {}) => (
+  phone
+    ? `user_${String(phone).replace(/\s+/g, '')}`
+    : `user_${String(email || _id || Date.now()).replace(/[^a-zA-Z0-9]/g, '_')}`
+);
+
+const resolveAvatarUrl = async (avatar, owner, folder = 'kowa/avatars') => {
   if (!avatar || !String(avatar).trim()) return null;
 
   const trimmedAvatar = String(avatar).trim();
@@ -18,7 +56,7 @@ const resolveAvatarUrl = async (avatar, phone, folder = 'kowa/avatars') => {
     return trimmedAvatar;
   }
 
-  return uploadImage(trimmedAvatar, folder, `user_${String(phone || '').replace(/\s+/g, '')}`);
+  return uploadImage(trimmedAvatar, folder, avatarPublicId(owner));
 };
 
 // 🔐 Générer Access Token (JWT)
@@ -62,15 +100,36 @@ exports.register = async (req, res) => {
       avatar
     } = req.body;
 
+    // 🪪 Identifiant principal : téléphone (prioritaire) ou email
+    const identity = resolveIdentity({ phone, email });
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedEmail = email ? normalizeEmail(email) : '';
+    const isEmailIdentity = identity?.channel === 'email';
+
     // ✅ Validation des champs obligatoires
-    if (!name || !phone || !password || !location) {
+    if (!name || !identity || !password || !location) {
       return res.status(400).json({
         success: false,
         message: 'Champs obligatoires manquants',
-        required: ['name', 'phone', 'password', 'location']
+        required: ['name', 'phone ou email', 'password', 'location']
       });
     }
-    
+
+    if (normalizedEmail && !EMAIL_REGEX.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Format email invalide'
+      });
+    }
+
+    // ✅ Validation du mot de passe
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le mot de passe doit contenir au moins 6 caractères'
+      });
+    }
+
     // ✅ Validation conditionnelle : businessName requis pour les professionnels
     if (businessType === 'professional' && !businessName) {
       return res.status(400).json({
@@ -79,73 +138,77 @@ exports.register = async (req, res) => {
       });
     }
 
-    // ✅ Vérifier si le phone existe déjà
-    let existingUser = await User.findOne({ phone }).select('+otp');
-    
+    const notVerifiedMessage = isEmailIdentity
+      ? 'Veuillez d\'abord vérifier votre adresse email'
+      : 'Veuillez d\'abord vérifier votre numéro de téléphone';
+
+    // ✅ Vérifier si l'identifiant existe déjà
+    let existingUser = await User.findOne(identity.query).select('+otp');
+
     if (existingUser) {
       // Si l'utilisateur est actif, c'est une vraie inscription existante
       if (existingUser.isActive) {
         return res.status(400).json({
           success: false,
-          message: 'Ce numéro de téléphone est déjà enregistré'
+          message: isEmailIdentity
+            ? 'Cet email est déjà enregistré'
+            : 'Ce numéro de téléphone est déjà enregistré'
         });
       }
-      
+
       // Si l'utilisateur est inactif (utilisateur temporaire créé lors du sendOTP)
       // Vérifier que l'OTP a été vérifié
       if (!existingUser.otp || !existingUser.otp.verified) {
         return res.status(400).json({
           success: false,
-          message: 'Veuillez d\'abord vérifier votre numéro de téléphone'
+          message: notVerifiedMessage
         });
       }
-      
+
+      // ✉️ Email secondaire (inscription par téléphone) : vérifier qu'il est libre
+      if (!isEmailIdentity && normalizedEmail) {
+        const emailExists = await User.findOne({ email: normalizedEmail, _id: { $ne: existingUser._id } });
+        if (emailExists) {
+          return res.status(400).json({
+            success: false,
+            message: 'Cet email est déjà enregistré'
+          });
+        }
+      }
+
       // 📤 Upload avatar sur Cloudinary si fourni
-      const avatarUrl = await resolveAvatarUrl(avatar, phone, 'kowa/avatars');
-      
+      const avatarUrl = await resolveAvatarUrl(avatar, existingUser, 'kowa/avatars');
+
       // ✅ Définir businessName par défaut pour les comptes individuels
       const finalBusinessName = businessName || (businessType === 'individual' ? name : '');
-      
+
       // ✅ Mettre à jour l'utilisateur temporaire avec les vraies données
       existingUser.name = name;
       existingUser.password = password;  // Sera hashé par le pre-save hook
-      existingUser.email = email || undefined;
+      existingUser.email = normalizedEmail || undefined;
       existingUser.businessType = businessType || 'individual';
       existingUser.businessName = finalBusinessName;
       existingUser.description = description || '';
       existingUser.location = location;
       existingUser.avatar = avatarUrl;
       existingUser.contactInfo = {
-        whatsapp: whatsapp || phone
+        whatsapp: whatsapp || normalizedPhone || undefined
       };
       existingUser.isActive = true;  // Activer le compte
       existingUser.verified = true;  // Déjà vérifié via OTP
-      
-      await existingUser.save();
-      
+
       // 🔑 Générer les tokens
       const accessToken = generateAccessToken(existingUser._id);
       const refreshToken = generateRefreshToken(existingUser._id);
-      
+
       existingUser.refreshToken = refreshToken;
       await existingUser.save();
-      
+
       return res.status(201).json({
         success: true,
         message: 'Inscription réussie',
         data: {
-          user: {
-            id: existingUser._id,
-            name: existingUser.name,
-            phone: existingUser.phone,
-            email: existingUser.email,
-            avatar: existingUser.avatar,
-            businessName: existingUser.businessName,
-            businessType: existingUser.businessType,
-            location: existingUser.location,
-            role: existingUser.role,
-            verified: existingUser.verified
-          },
+          user: existingUser.toAuthJSON(),
           tokens: {
             accessToken,
             refreshToken
@@ -154,7 +217,13 @@ exports.register = async (req, res) => {
       });
     }
 
-    const normalizedEmail = email ? normalizeEmail(email) : '';
+    // 🔒 Une inscription par email exige toujours la vérification OTP préalable
+    if (isEmailIdentity) {
+      return res.status(400).json({
+        success: false,
+        message: notVerifiedMessage
+      });
+    }
 
     // ✅ Vérifier si l'email existe déjà (si fourni)
     if (normalizedEmail) {
@@ -167,24 +236,16 @@ exports.register = async (req, res) => {
       }
     }
 
-    // ✅ Validation du mot de passe
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: 'Le mot de passe doit contenir au moins 6 caractères'
-      });
-    }
-
     // 📤 Upload avatar sur Cloudinary si fourni
-    const avatarUrl = await resolveAvatarUrl(avatar, phone, 'kowa/avatars');
-    
+    const avatarUrl = await resolveAvatarUrl(avatar, { phone: normalizedPhone }, 'kowa/avatars');
+
     // ✅ Définir businessName par défaut pour les comptes individuels
     const finalBusinessName = businessName || (businessType === 'individual' ? name : '');
 
     // ✅ Créer l'utilisateur
     const user = await User.create({
       name,
-      phone,
+      phone: normalizedPhone,
       email: normalizedEmail || undefined,
       password,  // Sera hashé par le pre-save hook
       businessType: businessType || 'individual',
@@ -193,7 +254,7 @@ exports.register = async (req, res) => {
       location,
       avatar: avatarUrl,
       contactInfo: {
-        whatsapp: whatsapp || phone  // Par défaut = phone principal
+        whatsapp: whatsapp || normalizedPhone  // Par défaut = phone principal
       },
       role: 'seller'  // Inscription = vendeur par défaut
     });
@@ -491,10 +552,10 @@ exports.updateProfile = async (req, res) => {
       user.avatar = await uploadImageBuffer(
         req.file.buffer,
         'kowa/avatars',
-        `user_${String(user.phone || '').replace(/\s+/g, '')}`
+        avatarPublicId(user)
       );
     } else if (typeof avatar === 'string' && avatar.trim()) {
-      user.avatar = await resolveAvatarUrl(avatar, user.phone, 'kowa/avatars');
+      user.avatar = await resolveAvatarUrl(avatar, user, 'kowa/avatars');
     }
 
     // ✉️ Email (vérifier unicité si changé)
@@ -510,6 +571,13 @@ exports.updateProfile = async (req, res) => {
         }
         user.email = trimmedEmail;
       } else if (!trimmedEmail) {
+        // Un compte créé par email doit garder son email (seul identifiant)
+        if (!user.phone) {
+          return res.status(400).json({
+            success: false,
+            message: 'L\'email est obligatoire pour un compte sans numéro de téléphone'
+          });
+        }
         user.email = undefined;
       }
     }
@@ -742,21 +810,14 @@ exports.forgotPassword = async (req, res) => {
     };
     await user.save();
 
-    // 📤 Envoyer le code par SMS (si téléphone)
-    if (!isEmail) {
-      try {
-        await smsService.sendSms({
-          to: normalizedIdentifier,
-          text: `TakTak - Code de reinitialisation : ${resetCode}. Valable 10 minutes.`,
-        });
-        console.log(`📱 SMS réinitialisation envoyé au ${normalizedIdentifier}`);
-      } catch (smsErr) {
-        console.error(`⚠️ Échec envoi SMS reset (${smsErr.code || smsErr.message})`);
+    // 📤 Envoyer le code par SMS ou par email
+    await deliverToIdentity(
+      { channel: isEmail ? 'email' : 'phone', value: normalizedIdentifier },
+      {
+        smsText: `TakTak - Code de reinitialisation : ${resetCode}. Valable 10 minutes.`,
+        sendEmail: (to) => emailService.sendResetCodeEmail(to, resetCode),
       }
-    } else {
-      // Email — TODO: intégrer envoi email
-      console.log(`📧 Code de réinitialisation pour ${normalizedIdentifier}:`, resetCode);
-    }
+    );
 
     res.status(200).json({
       success: true,
@@ -947,29 +1008,28 @@ exports.resetPassword = async (req, res) => {
 // @note    Pour réinitialisation mot de passe, utiliser /api/auth/forgot-password
 exports.sendOTP = async (req, res) => {
   try {
-    const { phone } = req.body;
+    const { phone, email } = req.body;
+    const identity = resolveIdentity({ phone, email });
+    const isEmailIdentity = identity?.channel === 'email';
 
-    console.log('📱 Demande OTP reçue:', { phone, body: req.body });
+    console.log('📱 Demande OTP reçue:', { phone, email });
 
-    if (!phone) {
-      console.log('❌ Téléphone manquant');
+    if (!identity) {
       return res.status(400).json({
         success: false,
-        message: 'Le numéro de téléphone est requis'
+        message: 'Le numéro de téléphone ou l\'email est requis'
       });
     }
 
-    // Validation du format du numéro de téléphone
-    const phoneRegex = /^\+\d{1,4}\s\d{6,}$/;
-    const trimmedPhone = phone.trim();
-    
-    console.log('🔍 Validation téléphone:', { 
-      phone, 
-      trimmedPhone, 
-      matches: phoneRegex.test(trimmedPhone) 
-    });
-    
-    if (!phoneRegex.test(trimmedPhone)) {
+    // Validation du format de l'identifiant
+    if (isEmailIdentity) {
+      if (!EMAIL_REGEX.test(identity.value)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Format email invalide. Exemple: nom@exemple.com'
+        });
+      }
+    } else if (!/^\+\d{1,4}\s\d{6,}$/.test(identity.value)) {
       console.log('❌ Format téléphone invalide');
       return res.status(400).json({
         success: false,
@@ -977,15 +1037,17 @@ exports.sendOTP = async (req, res) => {
       });
     }
 
-    // 🔍 Chercher si un utilisateur avec ce numéro existe
-    let user = await User.findOne({ phone });
-    
+    // 🔍 Chercher si un utilisateur avec cet identifiant existe
+    let user = await User.findOne(identity.query);
+
     // 🔐 VÉRIFICATION - Pour inscription seulement
     // Si un utilisateur actif existe déjà, interdire
     if (user && user.isActive) {
       return res.status(400).json({
         success: false,
-        message: 'Ce numéro de téléphone est déjà utilisé'
+        message: isEmailIdentity
+          ? 'Cet email est déjà utilisé'
+          : 'Ce numéro de téléphone est déjà utilisé'
       });
     }
     
@@ -1047,7 +1109,7 @@ exports.sendOTP = async (req, res) => {
       // 🆕 Créer un utilisateur temporaire pour l'inscription
       // Cet utilisateur sera complété lors du register final
       user = await User.create({
-        phone,
+        ...identity.query,
         otp: {
           code: otpCode,
           expiresAt: otpExpiry,
@@ -1065,17 +1127,12 @@ exports.sendOTP = async (req, res) => {
       });
     }
     
-    // 📤 Envoyer le code par SMS
-    try {
-      await smsService.sendSms({
-        to: phone,
-        text: `TakTak - Votre code de verification est : ${otpCode}. Valable 10 minutes.`,
-      });
-      console.log(`📱 OTP SMS envoyé au ${phone}`);
-    } catch (smsErr) {
-      console.error(`⚠️ Échec envoi SMS OTP (${smsErr.code || smsErr.message})`);
-      // On continue même si le SMS échoue en dev — l'OTP est dans la réponse dev
-    }
+    // 📤 Envoyer le code par SMS ou par email
+    // On continue même si l'envoi échoue en dev — l'OTP est dans la réponse dev
+    await deliverToIdentity(identity, {
+      smsText: `TakTak - Votre code de verification est : ${otpCode}. Valable 10 minutes.`,
+      sendEmail: (to) => emailService.sendOtpEmail(to, otpCode),
+    });
 
     res.status(200).json({
       success: true,
@@ -1109,17 +1166,18 @@ exports.sendOTP = async (req, res) => {
 // @access  Public
 exports.verifyOTP = async (req, res) => {
   try {
-    const { phone, code } = req.body;
+    const { phone, email, code } = req.body;
+    const identity = resolveIdentity({ phone, email });
 
-    if (!phone || !code) {
+    if (!identity || !code) {
       return res.status(400).json({
         success: false,
-        message: 'Le numéro de téléphone et le code sont requis'
+        message: 'L\'identifiant (téléphone ou email) et le code sont requis'
       });
     }
 
     // 🔍 Trouver l'utilisateur
-    const user = await User.findOne({ phone });
+    const user = await User.findOne(identity.query);
 
     console.log('🔍 Utilisateur trouvé:', user ? 'Oui' : 'Non');
     console.log('🔍 OTP présent:', user?.otp ? 'Oui' : 'Non');
@@ -1156,7 +1214,7 @@ exports.verifyOTP = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Numéro vérifié avec succès',
+      message: identity.channel === 'email' ? 'Email vérifié avec succès' : 'Numéro vérifié avec succès',
       data: {
         verified: true
       }
@@ -1228,22 +1286,23 @@ exports.getSellerProfile = async (req, res) => {
 // ===============================================
 // 📱 VÉRIFIER NUMÉRO DE TÉLÉPHONE (Mode 1)
 // ===============================================
-// @desc    Vérifier si un numéro de téléphone est déjà enregistré
+// @desc    Vérifier si un numéro de téléphone (ou un email) est déjà enregistré
 // @route   POST /api/auth/check-phone
 // @access  Public
 exports.checkPhone = async (req, res) => {
   try {
-    const { phone } = req.body;
+    const { phone, email } = req.body;
+    const identity = resolveIdentity({ phone, email });
 
-    if (!phone) {
+    if (!identity) {
       return res.status(400).json({
         success: false,
-        message: 'Le numéro de téléphone est requis'
+        message: 'Le numéro de téléphone ou l\'email est requis'
       });
     }
 
-    // Chercher un utilisateur actif avec ce numéro
-    const user = await User.findOne({ phone, isActive: true });
+    // Chercher un utilisateur actif avec cet identifiant
+    const user = await User.findOne({ ...identity.query, isActive: true });
 
     res.status(200).json({
       success: true,
@@ -1264,18 +1323,23 @@ exports.checkPhone = async (req, res) => {
 // ===============================================
 // 🚀 INSCRIPTION RAPIDE (Mode 1 — contextuel)
 // ===============================================
-// @desc    Inscription minimale : nom + phone (OTP déjà vérifié)
+// @desc    Inscription minimale : nom + phone ou email (OTP déjà vérifié)
 // @route   POST /api/auth/quick-register
 // @access  Public
 exports.quickRegister = async (req, res) => {
   try {
-    const { name, phone } = req.body;
+    const { name, phone, email } = req.body;
+    const identity = resolveIdentity({ phone, email });
+    const isEmailIdentity = identity?.channel === 'email';
+    const notVerifiedMessage = isEmailIdentity
+      ? 'Veuillez d\'abord vérifier votre adresse email'
+      : 'Veuillez d\'abord vérifier votre numéro de téléphone';
 
     // ✅ Validation
-    if (!name || !phone) {
+    if (!name || !identity) {
       return res.status(400).json({
         success: false,
-        message: 'Nom et numéro de téléphone requis'
+        message: 'Nom et numéro de téléphone (ou email) requis'
       });
     }
 
@@ -1287,12 +1351,12 @@ exports.quickRegister = async (req, res) => {
     }
 
     // 🔍 Chercher l'utilisateur temporaire (créé par sendOTP)
-    let user = await User.findOne({ phone });
+    let user = await User.findOne(identity.query);
 
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: 'Veuillez d\'abord vérifier votre numéro de téléphone'
+        message: notVerifiedMessage
       });
     }
 
@@ -1300,7 +1364,9 @@ exports.quickRegister = async (req, res) => {
     if (user.isActive) {
       return res.status(400).json({
         success: false,
-        message: 'Ce numéro de téléphone est déjà enregistré. Veuillez vous connecter.'
+        message: isEmailIdentity
+          ? 'Cet email est déjà enregistré. Veuillez vous connecter.'
+          : 'Ce numéro de téléphone est déjà enregistré. Veuillez vous connecter.'
       });
     }
 
@@ -1308,7 +1374,7 @@ exports.quickRegister = async (req, res) => {
     if (!user.otp || !user.otp.verified) {
       return res.status(400).json({
         success: false,
-        message: 'Veuillez d\'abord vérifier votre numéro de téléphone'
+        message: notVerifiedMessage
       });
     }
 
@@ -1319,7 +1385,7 @@ exports.quickRegister = async (req, res) => {
       tempPassword += chars.charAt(Math.floor(Math.random() * chars.length));
     }
 
-    console.log(`📱 Mot de passe temporaire pour ${phone}: ${tempPassword}`);
+    console.log(`📱 Mot de passe temporaire pour ${identity.value}: ${tempPassword}`);
 
     // ✅ Mettre à jour l'utilisateur temporaire
     user.name = name.trim();
@@ -1332,10 +1398,8 @@ exports.quickRegister = async (req, res) => {
     user.businessType = 'individual';
     user.businessName = name.trim();
     user.contactInfo = {
-      whatsapp: phone
+      whatsapp: user.phone || undefined
     };
-
-    await user.save();
 
     // 🔑 Générer les tokens
     const accessToken = generateAccessToken(user._id);
@@ -1344,15 +1408,11 @@ exports.quickRegister = async (req, res) => {
     user.refreshToken = refreshToken;
     await user.save();
 
-    // 📤 Envoyer le mot de passe temporaire par SMS
-    try {
-      await smsService.sendSms({
-        to: phone,
-        text: `TakTak - Votre mot de passe temporaire : ${tempPassword}. Changez-le dans votre profil.`,
-      });
-    } catch (smsErr) {
-      console.error(`⚠️ Échec envoi SMS mot de passe temporaire (${smsErr.code || smsErr.message})`);
-    }
+    // 📤 Envoyer le mot de passe temporaire par SMS ou par email
+    await deliverToIdentity(identity, {
+      smsText: `TakTak - Votre mot de passe temporaire : ${tempPassword}. Changez-le dans votre profil.`,
+      sendEmail: (to) => emailService.sendTempPasswordEmail(to, tempPassword),
+    });
 
     res.status(201).json({
       success: true,
@@ -1438,7 +1498,7 @@ exports.changePassword = async (req, res) => {
     user.needsPasswordChange = false;
     await user.save();
 
-    console.log(`✅ Mot de passe changé pour: ${user.phone}`);
+    console.log(`✅ Mot de passe changé pour: ${user.phone || user.email}`);
 
     res.status(200).json({
       success: true,
@@ -1469,7 +1529,7 @@ exports.deleteAccount = async (req, res) => {
       });
     }
 
-    console.log(`🗑️ Demande de suppression de compte: ${user.phone}`);
+    console.log(`🗑️ Demande de suppression de compte: ${user.phone || user.email}`);
 
     // 1. Supprimer toutes les annonces du vendeur
     const Product = require('../models/Product');
@@ -1515,7 +1575,7 @@ exports.deleteAccount = async (req, res) => {
 
     // 5. Supprimer le compte utilisateur
     await user.deleteOne();
-    console.log(`✅ Compte supprimé définitivement: ${user.phone}`);
+    console.log(`✅ Compte supprimé définitivement: ${user.phone || user.email}`);
 
     res.status(200).json({
       success: true,
