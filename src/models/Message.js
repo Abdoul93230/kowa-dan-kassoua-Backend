@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { publicAvatar } = require('../utils/avatar');
 
 const messageSchema = new mongoose.Schema({
   // 💬 Conversation
@@ -68,7 +69,13 @@ const messageSchema = new mongoose.Schema({
   attachments: [{
     type: String
   }],
-  
+
+  // 🎤 Durée du message vocal en millisecondes (si type = 'audio')
+  audioDurationMs: {
+    type: Number,
+    default: null
+  },
+
   // 💰 Détails de l'offre (si type = 'offer')
   offerDetails: {
     itemId: {
@@ -96,7 +103,7 @@ messageSchema.methods.toMessageJSON = function() {
     conversationId: this.conversationId.toString(),
     senderId: this.senderId.toString(),
     senderName: this.senderName,
-    senderAvatar: this.senderAvatar,
+    senderAvatar: publicAvatar(this.senderAvatar),
     content: this.content,
     timestamp: this.timestamp,
     delivered: this.delivered,
@@ -105,6 +112,7 @@ messageSchema.methods.toMessageJSON = function() {
     readAt: this.readAt,
     type: this.type,
     attachments: this.attachments,
+    audioDurationMs: this.audioDurationMs || null,
     postClosure: Boolean(this.postClosure),
     offerDetails: this.offerDetails ? {
       itemId: this.offerDetails.itemId?.toString(),
@@ -147,10 +155,12 @@ messageSchema.methods.markAsDelivered = async function() {
 
 // 🔍 Index pour performance
 messageSchema.index({ conversationId: 1, createdAt: -1 });
+messageSchema.index({ conversationId: 1, _id: -1 });       // Pagination par curseur (messages plus anciens)
+messageSchema.index({ conversationId: 1, read: 1 });       // Marquer une conversation comme lue
+messageSchema.index({ conversationId: 1, delivered: 1 });  // Accusés de livraison à la connexion
 messageSchema.index({ senderId: 1 });
-messageSchema.index({ read: 1 });
-messageSchema.index({ delivered: 1 });
-messageSchema.index({ type: 1 });
+// Les index seuls sur read / delivered / type ont été retirés : trop peu sélectifs,
+// ils ralentissaient chaque écriture sans accélérer aucune requête.
 
 // 📊 Middleware pour mettre à jour la conversation après l'envoi
 messageSchema.post('save', async function() {

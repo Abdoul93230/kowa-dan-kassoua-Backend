@@ -3,6 +3,13 @@ const Conversation = require('../models/Conversation');
 const User = require('../models/User');
 const { sendExpoPushNotifications } = require('../utils/expoNotifications');
 const { uploadAudio } = require('../utils/uploadAudio');
+const {
+  userRoom,
+  emitUnreadCount,
+  recordLastMessage,
+  isUserOnline,
+  emitMessageDelivered,
+} = require('../utils/realtime');
 
 const buildMessageNotificationBody = ({ senderName, content, type }) => {
   const safeSenderName = senderName || 'Nouveau message';
@@ -43,27 +50,6 @@ const notifyRecipientNewMessage = async ({ recipientId, conversationId, senderNa
   }
 };
 
-const emitMessageDelivered = ({ io, socketUtils, conversationId, messageId, deliveredAt, recipientId, senderId }) => {
-  if (!io || !conversationId || !messageId) return;
-
-  const payload = {
-    conversationId,
-    messageId,
-    deliveredAt,
-    recipientId,
-  };
-
-  io.to(conversationId).emit('message:delivered', payload);
-
-  const connectedUsers = socketUtils?.getConnectedUsers?.();
-  if (connectedUsers && connectedUsers.has(senderId)) {
-    const senderSockets = connectedUsers.get(senderId);
-    senderSockets.forEach((socketId) => {
-      io.to(socketId).emit('message:delivered', payload);
-    });
-  }
-};
-
 // ===============================================
 // 📋 OBTENIR LES MESSAGES D'UNE CONVERSATION
 // ===============================================
@@ -74,12 +60,10 @@ exports.getMessages = async (req, res) => {
   try {
     const { conversationId } = req.params;
     const userId = req.user.id;
-    const { page = 1, limit = 50 } = req.query;
-
-    console.log('📋 Récupération messages conversation:', conversationId);
+    const { page = 1, limit = 50, before } = req.query;
 
     // Vérifier que la conversation existe et que l'utilisateur y participe
-    const conversation = await Conversation.findById(conversationId);
+    const conversation = await Conversation.findById(conversationId).select('participants').lean();
 
     if (!conversation) {
       return res.status(404).json({
@@ -98,9 +82,34 @@ exports.getMessages = async (req, res) => {
       });
     }
 
-    // Récupérer les N messages les plus récents (page 1 = dernière tranche)
-    const lim = parseInt(limit);
-    const pg = parseInt(page);
+    const lim = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+    const pg = Math.max(parseInt(page, 10) || 1, 1);
+
+    // ⚡ Pagination par curseur : les `lim` messages les plus récents, ou ceux avant `before`.
+    // Un seul parcours d'index { conversationId, _id }, quel que soit le nombre de messages
+    // (pas de comptage, pas de `skip` qui relit toute la conversation).
+    const isValidCursor = before && /^[0-9a-fA-F]{24}$/.test(String(before));
+    if (pg === 1 || isValidCursor) {
+      const cursorFilter = { conversationId };
+      if (isValidCursor) cursorFilter._id = { $lt: before };
+
+      const newestFirst = await Message.find(cursorFilter).sort({ _id: -1 }).limit(lim + 1);
+      const hasMore = newestFirst.length > lim;
+      const pageMessages = newestFirst.slice(0, lim).reverse();
+
+      return res.status(200).json({
+        success: true,
+        data: pageMessages.map((msg) => msg.toMessageJSON()),
+        pagination: {
+          page: pg,
+          limit: lim,
+          hasMore,
+          nextBefore: hasMore && pageMessages.length ? pageMessages[0]._id.toString() : null,
+        }
+      });
+    }
+
+    // Ancien mode par numéro de page (conservé pour la compatibilité du client web)
     const total = await Message.countDocuments({ conversationId });
     // skip depuis la fin pour charger les messages récents en premier
     const skipFromEnd = (pg - 1) * lim;
@@ -110,13 +119,10 @@ exports.getMessages = async (req, res) => {
     const messages = await Message.find({ conversationId })
       .sort({ createdAt: 1 })
       .skip(skipFromStart)
-      .limit(actualLimit > 0 ? actualLimit : lim)
-      .populate('senderId', 'name avatar');
+      .limit(actualLimit > 0 ? actualLimit : lim);
 
     const combinedMessages = messages
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-    console.log(`✅ ${combinedMessages.length} message(s) trouvé(s)`);
 
     // Transformer en format frontend
     const messagesJSON = combinedMessages.map((msg) => (typeof msg.toMessageJSON === 'function' ? msg.toMessageJSON() : msg));
@@ -154,8 +160,6 @@ exports.sendMessage = async (req, res) => {
     const { conversationId, content, type = 'text', attachments = [], offerDetails } = req.body;
     const userId = req.user.id;
 
-    console.log('➕ Envoi message conversation:', conversationId);
-
     // Validation
     if (!conversationId || !content) {
       return res.status(400).json({
@@ -190,8 +194,18 @@ exports.sendMessage = async (req, res) => {
     // Récupérer les infos de l'expéditeur
     const sender = isBuyer ? conversation.participants.buyer : conversation.participants.seller;
     const isPostClosure = Boolean(conversation.closedByOwner);
+    const recipientId = isBuyer
+      ? conversation.participants.seller._id.toString()
+      : conversation.participants.buyer._id.toString();
 
-    // Créer le message
+    const io = req.app.get('io');
+    const socketUtils = req.app.get('socketUtils');
+
+    // Destinataire connecté → message livré dès sa création (1 écriture au lieu de 2)
+    const recipientOnline = await isUserOnline(io, recipientId);
+    const now = new Date();
+    const deliveredAt = recipientOnline ? now : null;
+
     const message = await Message.create({
       conversationId,
       senderId: userId,
@@ -201,67 +215,25 @@ exports.sendMessage = async (req, res) => {
       type,
       attachments,
       offerDetails,
-      timestamp: new Date().toISOString(),
+      timestamp: now.toISOString(),
       read: false,
+      delivered: recipientOnline,
+      deliveredAt,
       postClosure: isPostClosure,
     });
 
-    console.log('✅ Message créé:', message._id);
+    await recordLastMessage(conversation, message, { isBuyer, deliveredAt, postClosure: isPostClosure });
 
-    // Mettre à jour la conversation
-    conversation.lastMessage = {
-      id: message._id,
-      content: message.content,
-      senderId: message.senderId.toString(),
-      senderName: message.senderName,
-      timestamp: message.timestamp,
-      delivered: false,
-      deliveredAt: null,
-      read: false,
-      readAt: null,
-      type: message.type,
-      postClosure: isPostClosure
-    };
-
-    // Incrémenter le compteur de non-lus pour le destinataire
-    if (isBuyer) {
-      conversation.unreadCount.seller += 1;
-    } else {
-      conversation.unreadCount.buyer += 1;
-    }
-
-    conversation.updatedAt = new Date();
-    await conversation.save();
-
-    const recipientId = isBuyer
-      ? conversation.participants.seller._id.toString()
-      : conversation.participants.buyer._id.toString();
-
-    // Émettre via Socket.IO pour notification temps réel
-    const io = req.app.get('io');
-    const socketUtils = req.app.get('socketUtils');
-
-    if (socketUtils) {
-      const connectedUsers = socketUtils.getConnectedUsers();
-      if (connectedUsers && connectedUsers.has(recipientId)) {
-        const deliveredAt = new Date();
-        message.delivered = true;
-        message.deliveredAt = deliveredAt;
-        await message.save();
-        conversation.lastMessage.delivered = true;
-        conversation.lastMessage.deliveredAt = deliveredAt;
-        await conversation.save();
-
-        emitMessageDelivered({
-          io,
-          socketUtils,
-          conversationId,
-          messageId: message._id.toString(),
-          deliveredAt,
-          recipientId,
-          senderId: userId,
-        });
-      }
+    if (recipientOnline) {
+      emitMessageDelivered({
+        io,
+        socketUtils,
+        conversationId,
+        messageId: message._id.toString(),
+        deliveredAt,
+        recipientId,
+        senderId: userId,
+      });
     }
 
     const messageJSON = message.toMessageJSON();
@@ -269,27 +241,17 @@ exports.sendMessage = async (req, res) => {
     if (io) {
       io.to(conversationId).emit('message:new', messageJSON);
 
-      if (socketUtils) {
-        try {
-          const connectedUsers = socketUtils.getConnectedUsers();
-          if (connectedUsers && connectedUsers.has(recipientId)) {
-            const otherUserSockets = connectedUsers.get(recipientId);
-            otherUserSockets.forEach((socketId) => {
-              io.to(socketId).emit('conversation:updated', {
-                conversationId,
-                lastMessage: conversation.lastMessage,
-                unreadCount: isBuyer ? conversation.unreadCount.seller : conversation.unreadCount.buyer
-              });
-              io.to(socketId).emit('unreadCount:changed');
-            });
-          }
-        } catch (socketError) {
-          console.error('⚠️ Erreur notification Socket.IO:', socketError.message);
-        }
-      }
+      // Destinataire (tous ses appareils, via sa room personnelle) : aperçu + nouveau total de non-lus
+      io.to(userRoom(recipientId)).emit('conversation:updated', {
+        conversationId,
+        lastMessage: conversation.lastMessage,
+        unreadCount: isBuyer ? conversation.unreadCount.seller : conversation.unreadCount.buyer
+      });
+      emitUnreadCount(io, recipientId);
     }
 
-    await notifyRecipientNewMessage({
+    // Notification push en arrière-plan : l'expéditeur n'attend plus l'API Expo
+    notifyRecipientNewMessage({
       recipientId,
       conversationId,
       senderName: sender.name,
@@ -530,7 +492,6 @@ exports.sendVoiceMessage = async (req, res) => {
     const userId = req.user.id;
     const audioFile = req.file;
 
-    console.log('🎤 Envoi message vocal:', { conversationId, userId, fileSize: audioFile?.size });
 
     // Vérifier qu'un fichier audio est présent
     if (!audioFile) {
@@ -563,16 +524,33 @@ exports.sendVoiceMessage = async (req, res) => {
     }
 
     // Upload l'audio vers Cloudinary
-    console.log('📤 Upload audio vers Cloudinary...');
     const { url: audioUrl, duration } = await uploadAudio(
       audioFile.buffer,
       'kowa/voice-messages',
       `voice_${conversationId}_${Date.now()}`
     );
 
+    // Durée : celle mesurée par Cloudinary, sinon celle envoyée par l'app
+    const clientDurationMs = Number(req.body?.durationMs);
+    const audioDurationMs = duration > 0
+      ? Math.round(duration * 1000)
+      : (Number.isFinite(clientDurationMs) && clientDurationMs > 0 ? Math.round(clientDurationMs) : null);
+
     // Créer le message vocal
     const sender = isBuyer ? conversation.participants.buyer : conversation.participants.seller;
     const isPostClosure = Boolean(conversation.closedByOwner);
+    const recipientId = isBuyer
+      ? conversation.participants.seller._id.toString()
+      : conversation.participants.buyer._id.toString();
+
+    const io = req.app.get('io');
+    const socketUtils = req.app.get('socketUtils');
+
+    // Destinataire connecté → message livré dès sa création (1 écriture au lieu de 2)
+    const recipientOnline = await isUserOnline(io, recipientId);
+    const now = new Date();
+    const deliveredAt = recipientOnline ? now : null;
+
     const message = await Message.create({
       conversationId,
       senderId: userId,
@@ -581,65 +559,31 @@ exports.sendVoiceMessage = async (req, res) => {
       content: '', // Pas de contenu textuel pour un message vocal
       type: 'audio',
       attachments: [audioUrl], // URL de l'audio
-      timestamp: new Date().toISOString(),
+      audioDurationMs,
+      timestamp: now.toISOString(),
       read: false,
+      delivered: recipientOnline,
+      deliveredAt,
       postClosure: isPostClosure,
     });
 
-    // Mettre à jour la conversation
-    conversation.lastMessage = {
-      id: message._id,
-      content: '🎤 Message vocal',
-      senderId: message.senderId.toString(),
-      senderName: message.senderName,
-      timestamp: message.timestamp,
-      delivered: false,
-      deliveredAt: null,
-      read: false,
-      readAt: null,
-      type: 'audio',
-      postClosure: isPostClosure
-    };
+    await recordLastMessage(conversation, message, {
+      isBuyer,
+      deliveredAt,
+      postClosure: isPostClosure,
+      preview: '🎤 Message vocal',
+    });
 
-    // Incrémenter le compteur de non-lus pour le destinataire
-    if (isBuyer) {
-      conversation.unreadCount.seller += 1;
-    } else {
-      conversation.unreadCount.buyer += 1;
-    }
-
-    conversation.updatedAt = new Date();
-    await conversation.save();
-
-    const recipientId = isBuyer
-      ? conversation.participants.seller._id.toString()
-      : conversation.participants.buyer._id.toString();
-
-    // Émettre via Socket.IO pour notification temps réel
-    const io = req.app.get('io');
-    const socketUtils = req.app.get('socketUtils');
-
-    if (socketUtils) {
-      const connectedUsers = socketUtils.getConnectedUsers();
-      if (connectedUsers && connectedUsers.has(recipientId)) {
-        const deliveredAt = new Date();
-        message.delivered = true;
-        message.deliveredAt = deliveredAt;
-        await message.save();
-        conversation.lastMessage.delivered = true;
-        conversation.lastMessage.deliveredAt = deliveredAt;
-        await conversation.save();
-
-        emitMessageDelivered({
-          io,
-          socketUtils,
-          conversationId,
-          messageId: message._id.toString(),
-          deliveredAt,
-          recipientId,
-          senderId: userId,
-        });
-      }
+    if (recipientOnline) {
+      emitMessageDelivered({
+        io,
+        socketUtils,
+        conversationId,
+        messageId: message._id.toString(),
+        deliveredAt,
+        recipientId,
+        senderId: userId,
+      });
     }
 
     const messageJSON = message.toMessageJSON();
@@ -648,28 +592,17 @@ exports.sendVoiceMessage = async (req, res) => {
       // Envoyer le message à tous les participants de la conversation
       io.to(conversationId).emit('message:new', messageJSON);
 
-      // Notifier l'autre participant
-      if (socketUtils) {
-        try {
-          const connectedUsers = socketUtils.getConnectedUsers();
-          if (connectedUsers && connectedUsers.has(recipientId)) {
-            const otherUserSockets = connectedUsers.get(recipientId);
-            otherUserSockets.forEach(socketId => {
-              io.to(socketId).emit('conversation:updated', {
-                conversationId,
-                lastMessage: conversation.lastMessage,
-                unreadCount: isBuyer ? conversation.unreadCount.seller : conversation.unreadCount.buyer
-              });
-              io.to(socketId).emit('unreadCount:changed');
-            });
-          }
-        } catch (socketError) {
-          console.error('⚠️ Erreur notification Socket.IO:', socketError.message);
-        }
-      }
+      // Destinataire (tous ses appareils) : aperçu + nouveau total de non-lus
+      io.to(userRoom(recipientId)).emit('conversation:updated', {
+        conversationId,
+        lastMessage: conversation.lastMessage,
+        unreadCount: isBuyer ? conversation.unreadCount.seller : conversation.unreadCount.buyer
+      });
+      emitUnreadCount(io, recipientId);
     }
 
-    await notifyRecipientNewMessage({
+    // Notification push en arrière-plan
+    notifyRecipientNewMessage({
       recipientId,
       conversationId,
       senderName: sender.name,
@@ -677,7 +610,6 @@ exports.sendVoiceMessage = async (req, res) => {
       type: 'audio',
     });
 
-    console.log('✅ Message vocal envoyé:', message._id);
 
     res.status(201).json({
       success: true,

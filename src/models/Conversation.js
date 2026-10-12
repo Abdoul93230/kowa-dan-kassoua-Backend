@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { publicAvatar } = require('../utils/avatar');
 
 const conversationSchema = new mongoose.Schema({
   // 👥 Participants
@@ -175,14 +176,14 @@ conversationSchema.methods.toConversationJSON = async function(userId) {
       buyer: {
         id: this.participants.buyer._id.toString(),
         name: this.participants.buyer.name,
-        avatar: this.participants.buyer.avatar
+        avatar: publicAvatar(this.participants.buyer.avatar)
       },
       seller: this.participants.seller.toSellerJSON 
         ? this.participants.seller.toSellerJSON(this.participants.seller.totalListings || 0) 
         : {
             id: this.participants.seller._id.toString(),
             name: this.participants.seller.name,
-            avatar: this.participants.seller.avatar
+            avatar: publicAvatar(this.participants.seller.avatar)
           }
     },
     item: this.item.id ? {
@@ -275,9 +276,10 @@ conversationSchema.methods.unarchive = async function() {
 };
 
 // 🔍 Index pour recherche et performance
-conversationSchema.index({ 'participants.buyer': 1, status: 1 });
-conversationSchema.index({ 'participants.seller': 1, status: 1 });
-conversationSchema.index({ updatedAt: -1 });
+// Liste des conversations d'un utilisateur (filtre + tri par activité couverts par l'index)
+conversationSchema.index({ 'participants.buyer': 1, status: 1, updatedAt: -1 });
+conversationSchema.index({ 'participants.seller': 1, status: 1, updatedAt: -1 });
+conversationSchema.index({ 'participants.buyer': 1, 'participants.seller': 1, 'item.id': 1 }); // createOrGet
 conversationSchema.index({ 'item.id': 1 });
 
 // 🔍 Méthode statique pour trouver ou créer une conversation

@@ -1,4 +1,29 @@
 const Category = require('../models/Category');
+const cache = require('../utils/cache');
+
+const CATEGORIES_TTL_MS = 5 * 60 * 1000;
+
+// Catégories triées (« Autres » toujours en dernière sous-catégorie), en cache :
+// elles changent rarement et sont demandées par presque chaque écran.
+const loadCategories = (includeInactive = false) =>
+  cache.wrap(`categories:${includeInactive ? 'all' : 'active'}`, CATEGORIES_TTL_MS, async () => {
+    const filter = includeInactive ? {} : { active: true };
+    const categories = await Category.find(filter).sort('order name').select('-__v');
+
+    return categories.map((cat) => {
+      const json = cat.toJSON();
+      const subs = [...(json.subcategories || [])];
+      const autresIdx = subs.findIndex((s) => s.slug === 'autres');
+      if (autresIdx > -1 && autresIdx !== subs.length - 1) {
+        const [autres] = subs.splice(autresIdx, 1);
+        subs.push(autres);
+      }
+      json.subcategories = subs;
+      return json;
+    });
+  });
+
+exports.loadCategories = loadCategories;
 
 // ===============================================
 // @desc    Récupérer toutes les catégories actives
@@ -7,27 +32,9 @@ const Category = require('../models/Category');
 // ===============================================
 exports.getCategories = async (req, res) => {
   try {
-    const { active = true, includeInactive = false } = req.query;
-    
-    // Filtre : uniquement les catégories actives par défaut
-    const filter = includeInactive === 'true' ? {} : { active: true };
-    
-    const categories = await Category.find(filter)
-      .sort('order name')
-      .select('-__v');
+    const sorted = await loadCategories(req.query.includeInactive === 'true');
 
-    // Garantir que la sous-catégorie "Autres" est toujours en dernière position
-    const sorted = categories.map(cat => {
-      const subs = [...cat.subcategories];
-      const autresIdx = subs.findIndex(s => s.slug === 'autres');
-      if (autresIdx > -1 && autresIdx !== subs.length - 1) {
-        const [autres] = subs.splice(autresIdx, 1);
-        subs.push(autres);
-        cat.subcategories = subs;
-      }
-      return cat;
-    });
-
+    res.set('Cache-Control', 'public, max-age=300');
     res.status(200).json({
       success: true,
       data: sorted,

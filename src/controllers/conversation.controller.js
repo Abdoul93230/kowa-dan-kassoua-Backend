@@ -3,6 +3,7 @@ const Message = require('../models/Message');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const { sendExpoPushNotifications } = require('../utils/expoNotifications');
+const { userRoom, getUnreadTotal, emitUnreadCount } = require('../utils/realtime');
 
 const DEAL_STATUS = {
   OPEN: 'open',
@@ -13,12 +14,9 @@ const DEAL_STATUS = {
 
 const emitConversationUpdate = async (req, conversation, userId) => {
   const io = req.app.get('io');
-  const socketUtils = req.app.get('socketUtils');
-
-  if (!io || !socketUtils) return;
+  if (!io) return;
 
   try {
-    const connectedUsers = socketUtils.getConnectedUsers();
     const payload = {
       conversationId: conversation._id.toString(),
       lastMessage: conversation.lastMessage,
@@ -39,17 +37,13 @@ const emitConversationUpdate = async (req, conversation, userId) => {
       }
     };
 
-    const recipients = [conversation.participants.buyer, conversation.participants.seller]
-      .map((participant) => participant?.toString())
-      .filter(Boolean);
+    // Rooms personnelles des deux participants (fonctionne aussi sur plusieurs serveurs)
+    const rooms = [conversation.participants.buyer, conversation.participants.seller]
+      .map((participant) => (participant?._id || participant)?.toString())
+      .filter(Boolean)
+      .map(userRoom);
 
-    recipients.forEach((recipientId) => {
-      if (connectedUsers && connectedUsers.has(recipientId)) {
-        connectedUsers.get(recipientId).forEach((socketId) => {
-          io.to(socketId).emit('conversation:updated', payload);
-        });
-      }
-    });
+    if (rooms.length) io.to(rooms).emit('conversation:updated', payload);
   } catch (error) {
     console.error('⚠️ Erreur emission conversation:updated:', error.message);
   }
@@ -228,23 +222,33 @@ const appendClosureHistory = async (conversation, systemMessage, actionName, act
 // @access  Private
 exports.getConversations = async (req, res) => {
   try {
-    console.log({ id: req.user.id });
     const userId = req.user.id;
 
-    console.log('📋 Récupération des conversations pour l\'utilisateur:', userId);
+    // Pagination facultative (mobile) : ?limit=30&before=<updatedAt ISO>.
+    // Sans `limit`, comportement historique : toutes les conversations (client web).
+    const limitNum = req.query.limit ? Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100) : null;
+    const before = req.query.before ? new Date(req.query.before) : null;
 
-    // Trouver toutes les conversations où l'utilisateur est participant
-    const conversations = await Conversation.find({
+    const filter = {
       $or: [
         { 'participants.buyer': userId },
         { 'participants.seller': userId }
       ],
       status: 'active'
-    })
+    };
+    if (before && !Number.isNaN(before.getTime())) filter.updatedAt = { $lt: before };
+
+    const query = Conversation.find(filter)
+      .select('-closureHistory')
       .populate('participants.buyer', 'name avatar phone email')
       .populate('participants.seller', 'name avatar phone email location rating totalReviews verified businessType')
       .populate('item.id', 'title mainImage price status')
       .sort({ updatedAt: -1 });
+    if (limitNum) query.limit(limitNum + 1);
+
+    let conversations = await query;
+    const hasMore = Boolean(limitNum && conversations.length > limitNum);
+    if (hasMore) conversations = conversations.slice(0, limitNum);
 
     // Resynchroniser l'etat de lecture du dernier message avec la source de verite (collection Message).
     const lastMessageIds = conversations
@@ -255,7 +259,8 @@ exports.getConversations = async (req, res) => {
     let readByMessageId = new Map();
     if (lastMessageIds.length > 0) {
       const lastMessages = await Message.find({ _id: { $in: lastMessageIds } })
-        .select('_id read');
+        .select('_id read')
+        .lean();
 
       readByMessageId = new Map(
         lastMessages.map((msg) => [msg._id.toString(), Boolean(msg.read)])
@@ -273,21 +278,22 @@ exports.getConversations = async (req, res) => {
       (conv) => conv?.participants?.buyer && conv?.participants?.seller
     );
 
-    const orphanCount = conversations.length - validConversations.length;
-    if (orphanCount > 0) {
-      console.warn(`⚠️ ${orphanCount} conversation(s) ignorée(s) car participant manquant`);
-    }
-
-    console.log(`✅ ${validConversations.length} conversation(s) valide(s) trouvée(s)`);
-
     // Transformer en format frontend
     const conversationsJSON = await Promise.all(
       validConversations.map((conv) => conv.toConversationJSON(userId))
     );
 
+    const last = conversations[conversations.length - 1];
     res.status(200).json({
       success: true,
-      data: conversationsJSON
+      data: conversationsJSON,
+      ...(limitNum ? {
+        pagination: {
+          limit: limitNum,
+          hasMore,
+          nextBefore: hasMore && last?.updatedAt ? last.updatedAt.toISOString() : null,
+        }
+      } : {})
     });
 
   } catch (error) {
@@ -503,9 +509,9 @@ exports.markConversationAsRead = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    console.log('✅ Marquage conversation comme lue:', id);
-
-    const conversation = await Conversation.findById(id);
+    const conversation = await Conversation.findById(id)
+      .select('participants unreadCount lastMessage')
+      .lean();
 
     if (!conversation) {
       return res.status(404).json({
@@ -514,7 +520,6 @@ exports.markConversationAsRead = async (req, res) => {
       });
     }
 
-    // Déterminer si l'utilisateur est acheteur ou vendeur
     const isBuyer = conversation.participants.buyer.toString() === userId;
     const isSeller = conversation.participants.seller.toString() === userId;
 
@@ -525,97 +530,53 @@ exports.markConversationAsRead = async (req, res) => {
       });
     }
 
-    // Réinitialiser le compteur de non-lus pour cet utilisateur
-    if (isBuyer) {
-      conversation.unreadCount.buyer = 0;
-    } else {
-      conversation.unreadCount.seller = 0;
-    }
-
-    await conversation.save();
-
-    // Récupérer les messages qui vont être marqués comme lus pour notifier leurs expéditeurs
-    const messagesToMarkAsRead = await Message.find({
+    const role = isBuyer ? 'buyer' : 'seller';
+    const unreadMessages = await Message.find({
       conversationId: id,
       senderId: { $ne: userId },
       read: false
-    });
+    }).select('_id senderId').lean();
 
-    console.log(`📨 ${messagesToMarkAsRead.length} message(s) à marquer comme lu`);
-
-    // Marquer tous les messages non-lus de cette conversation comme lus
-    await Message.updateMany(
-      {
-        conversationId: id,
-        senderId: { $ne: userId },
-        read: false
-      },
-      {
-        $set: { read: true, readAt: new Date() }
-      }
-    );
-
-    // Garder la conversation synchronisee pour l'affichage liste apres refresh.
-    if (
-      conversation.lastMessage?.id &&
-      conversation.lastMessage?.senderId &&
-      conversation.lastMessage.senderId.toString() !== userId
-    ) {
-      conversation.lastMessage.delivered = true;
-      conversation.lastMessage.deliveredAt = new Date();
-      conversation.lastMessage.read = true;
-      conversation.lastMessage.readAt = new Date();
-      await conversation.save();
+    // Cas le plus fréquent (on rouvre une conversation déjà lue) : aucune écriture, aucun événement
+    if (unreadMessages.length === 0 && !(conversation.unreadCount?.[role] > 0)) {
+      return res.status(200).json({ success: true, message: 'Conversation déjà lue' });
     }
 
-    // Notifier via Socket.IO du changement du compteur de non-lus
+    const now = new Date();
+    if (unreadMessages.length > 0) {
+      await Message.updateMany(
+        { _id: { $in: unreadMessages.map((msg) => msg._id) } },
+        [{ $set: { read: true, readAt: now, delivered: true, deliveredAt: { $ifNull: ['$deliveredAt', now] } } }]
+      );
+    }
+
+    // Une seule écriture ciblée ; timestamps: false pour ne PAS faire remonter la conversation
+    // en tête de liste simplement parce qu'elle a été lue
+    const set = { [`unreadCount.${role}`]: 0 };
+    const last = conversation.lastMessage;
+    if (last?.id && last.senderId && last.senderId.toString() !== userId && !last.read) {
+      Object.assign(set, {
+        'lastMessage.read': true,
+        'lastMessage.readAt': now,
+        'lastMessage.delivered': true,
+        'lastMessage.deliveredAt': last.deliveredAt || now,
+      });
+    }
+    await Conversation.updateOne({ _id: id }, { $set: set }, { timestamps: false });
+
+    // Temps réel : nouveau total de non-lus pour le lecteur, accusés de lecture pour l'expéditeur
     const io = req.app.get('io');
-    const socketUtils = req.app.get('socketUtils');
-    if (io && socketUtils) {
-      try {
-        const connectedUsers = socketUtils.getConnectedUsers();
-        
-        // Notifier l'utilisateur actuel du changement de compteur
-        if (connectedUsers && connectedUsers.has && connectedUsers.has(userId)) {
-          const userSockets = connectedUsers.get(userId);
-          if (userSockets) {
-            userSockets.forEach(socketId => {
-              io.to(socketId).emit('unreadCount:changed');
-            });
-          }
-        }
-
-        // Notifier les expéditeurs que leurs messages ont été lus
-        messagesToMarkAsRead.forEach(msg => {
-          const senderId = msg.senderId.toString();
-          console.log(`📢 Notification message:read pour ${msg._id} à l'expéditeur ${senderId}`);
-          
-          // Émettre à la room de la conversation
-          io.to(id).emit('message:read', {
-            conversationId: id,
-            messageId: msg._id.toString(),
-            readAt: new Date()
-          });
-
-          // Émettre aussi directement à l'expéditeur
-          if (connectedUsers.has(senderId)) {
-            const senderSockets = connectedUsers.get(senderId);
-            senderSockets.forEach(socketId => {
-              io.to(socketId).emit('message:read', {
-                conversationId: id,
-                messageId: msg._id.toString(),
-                readAt: new Date()
-              });
-            });
-          }
+    if (io) {
+      emitUnreadCount(io, userId);
+      unreadMessages.forEach((msg) => {
+        // Une seule émission par socket même s'il est dans les deux rooms
+        io.to(id).to(userRoom(msg.senderId.toString())).emit('message:read', {
+          conversationId: id,
+          messageId: msg._id.toString(),
+          readAt: now
         });
-      } catch (socketError) {
-        console.error('⚠️ Erreur notification Socket.IO:', socketError.message);
-        // Ne pas faire échouer la requête si Socket.IO a un problème
-      }
+      });
     }
-
-    console.log('✅ Conversation marquée comme lue');
 
     res.status(200).json({
       success: true,
@@ -1027,23 +988,7 @@ exports.updateConversationDeal = async (req, res) => {
 // @access  Private
 exports.getUnreadCount = async (req, res) => {
   try {
-    const userId = req.user.id;
-
-    const conversations = await Conversation.find({
-      $or: [
-        { 'participants.buyer': userId },
-        { 'participants.seller': userId }
-      ],
-      status: 'active'
-    });
-
-    let totalUnread = 0;
-    conversations.forEach(conv => {
-      const isBuyer = conv.participants.buyer.toString() === userId;
-      totalUnread += isBuyer ? conv.unreadCount.buyer : conv.unreadCount.seller;
-    });
-
-    console.log('📊 Compteur messages non lus pour', userId, ':', totalUnread);
+    const totalUnread = await getUnreadTotal(req.user.id);
 
     res.status(200).json({
       success: true,

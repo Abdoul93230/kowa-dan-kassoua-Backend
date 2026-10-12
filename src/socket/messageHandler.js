@@ -1,12 +1,20 @@
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
 const { sendExpoPushNotifications } = require('../utils/expoNotifications');
+const {
+  userRoom,
+  emitUnreadCount,
+  recordLastMessage,
+  isUserOnline,
+  onlineAmong,
+  emitMessageDelivered,
+} = require('../utils/realtime');
 
-// Map pour stocker les utilisateurs connectés
-// Format: { userId: Set of socketIds }
-const connectedUsers = new Map();
+// Présence : plus de Map locale des connectés. Chaque socket est dans la room `user:<id>` ;
+// avec l'adaptateur Redis, ces rooms sont partagées entre tous les serveurs.
 
 const buildMessageNotificationBody = ({ senderName, content, type }) => {
   const safeSenderName = senderName || 'Nouveau message';
@@ -28,7 +36,7 @@ const notifyRecipientNewMessage = async ({ recipientId, conversationId, senderNa
   if (!recipientId || !conversationId) return;
 
   try {
-    const recipient = await User.findById(recipientId).select('expoPushTokens');
+    const recipient = await User.findById(recipientId).select('expoPushTokens').lean();
     const tokens = Array.isArray(recipient?.expoPushTokens) ? recipient.expoPushTokens : [];
 
     if (tokens.length === 0) return;
@@ -47,25 +55,15 @@ const notifyRecipientNewMessage = async ({ recipientId, conversationId, senderNa
   }
 };
 
-const emitMessageDelivered = ({ io, conversationId, messageId, deliveredAt, recipientId, senderId, connectedUsersMap }) => {
-  if (!io || !conversationId || !messageId) return;
-
-  const payload = {
-    conversationId,
-    messageId,
-    deliveredAt,
-    recipientId,
-  };
-
-  io.to(conversationId).emit('message:delivered', payload);
-
-  if (connectedUsersMap && connectedUsersMap.has(senderId)) {
-    const senderSockets = connectedUsersMap.get(senderId);
-    senderSockets.forEach((socketId) => {
-      io.to(socketId).emit('message:delivered', payload);
-    });
-  }
+// L'autre participant d'une conversation (objet lean ou document)
+const otherParticipantId = (conversation, userId) => {
+  const buyer = String(conversation.participants.buyer?._id || conversation.participants.buyer);
+  const seller = String(conversation.participants.seller?._id || conversation.participants.seller);
+  return buyer === userId ? seller : buyer;
 };
+
+// Rooms personnelles des contacts d'un utilisateur
+const contactRooms = (contacts) => [...(contacts || [])].map(userRoom);
 
 /**
  * Configuration du gestionnaire Socket.IO pour la messagerie temps réel
@@ -75,30 +73,11 @@ const setupSocketHandlers = (io) => {
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token;
-      
-      console.log('🔐 Tentative d\'authentification Socket.IO...');
-      
-      if (!token) {
-        console.error('❌ Token manquant dans handshake');
-        return next(new Error('Token manquant'));
-      }
+      if (!token) return next(new Error('Token manquant'));
 
-      console.log('🔑 Token reçu:', token.substring(0, 20) + '...');
-
-      // Vérifier le token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      
-      console.log('✅ Token valide pour utilisateur:', decoded.id);
-      
-      // Récupérer l'utilisateur
-      const user = await User.findById(decoded.id).select('-password');
-      
-      if (!user) {
-        console.error('❌ Utilisateur introuvable:', decoded.id);
-        return next(new Error('Utilisateur introuvable'));
-      }
-
-      console.log('✅ Utilisateur trouvé:', user.name);
+      const user = await User.findById(decoded.id).select('name avatar').lean();
+      if (!user) return next(new Error('Utilisateur introuvable'));
 
       socket.userId = user._id.toString();
       socket.userData = {
@@ -109,60 +88,57 @@ const setupSocketHandlers = (io) => {
 
       next();
     } catch (error) {
-      console.error('❌ Erreur authentification Socket:', error.message);
       next(new Error('Authentification échouée: ' + error.message));
     }
   });
 
   io.on('connection', (socket) => {
     const userId = socket.userId;
-    console.log('✅ Utilisateur connecté:', userId, 'Socket:', socket.id);
 
-    // Ajouter l'utilisateur à la map des connectés
-    if (!connectedUsers.has(userId)) {
-      connectedUsers.set(userId, new Set());
-    }
-    connectedUsers.get(userId).add(socket.id);
+    // Room personnelle : on cible l'utilisateur (tous ses appareils, sur tous les serveurs)
+    socket.data.userId = userId;
+    socket.join(userRoom(userId));
 
-    // A la reconnexion d'un utilisateur, marquer comme livres les messages en attente de livraison.
+    // Contacts (interlocuteurs) + messages en attente de livraison — limités aux
+    // conversations de CET utilisateur (avant : parcours de tous les messages non livrés de la base)
+    socket.data.contacts = new Set();
     (async () => {
       try {
+        const oid = new mongoose.Types.ObjectId(userId);
+        const conversations = await Conversation.find({
+          $or: [{ 'participants.buyer': oid }, { 'participants.seller': oid }],
+          status: 'active',
+        }).select('_id participants').lean();
+
+        conversations.forEach((conv) => socket.data.contacts.add(otherParticipantId(conv, userId)));
+
+        // Présence : uniquement les contacts en ligne (avant : liste de TOUS les connectés)
+        const onlineContacts = await onlineAmong(io, [...socket.data.contacts]);
+        socket.emit('users:online', { userIds: [...onlineContacts] });
+
+        // Premier appareil connecté → prévenir ses contacts
+        const ownSockets = await io.in(userRoom(userId)).fetchSockets();
+        if (ownSockets.length === 1 && socket.data.contacts.size > 0) {
+          io.to(contactRooms(socket.data.contacts)).emit('user:online', { userId });
+        }
+
+        if (conversations.length === 0) return;
+
         const pendingDeliveries = await Message.find({
-          senderId: { $ne: userId },
+          conversationId: { $in: conversations.map((conv) => conv._id) },
           delivered: false,
-        }).select('_id conversationId senderId');
+          senderId: { $ne: oid },
+        }).select('_id conversationId senderId').lean();
 
         if (pendingDeliveries.length === 0) return;
 
-        const conversationIds = Array.from(
-          new Set(pendingDeliveries.map((msg) => msg.conversationId.toString()))
-        );
-
-        const conversations = await Conversation.find({
-          _id: { $in: conversationIds },
-          $or: [
-            { 'participants.buyer': userId },
-            { 'participants.seller': userId },
-          ],
-        }).select('_id');
-
-        const allowedConversationIds = new Set(
-          conversations.map((conv) => conv._id.toString())
-        );
-
-        const filtered = pendingDeliveries.filter((msg) =>
-          allowedConversationIds.has(msg.conversationId.toString())
-        );
-
-        if (filtered.length === 0) return;
-
         const deliveredAt = new Date();
         await Message.updateMany(
-          { _id: { $in: filtered.map((msg) => msg._id) } },
+          { _id: { $in: pendingDeliveries.map((msg) => msg._id) } },
           { $set: { delivered: true, deliveredAt } }
         );
 
-        filtered.forEach((msg) => {
+        pendingDeliveries.forEach((msg) => {
           emitMessageDelivered({
             io,
             conversationId: msg.conversationId.toString(),
@@ -170,54 +146,41 @@ const setupSocketHandlers = (io) => {
             deliveredAt,
             recipientId: userId,
             senderId: msg.senderId.toString(),
-            connectedUsersMap: connectedUsers,
           });
         });
-      } catch (deliveryError) {
-        console.error('⚠️ Erreur sync deliveries à la connexion:', deliveryError.message);
+      } catch (connectError) {
+        console.error('⚠️ Erreur initialisation socket:', connectError.message);
       }
     })();
-
-    // Envoyer la liste des utilisateurs actuellement en ligne au client qui vient de se connecter
-    const onlineUserIds = Array.from(connectedUsers.keys()).filter(id => id !== userId);
-    socket.emit('users:online', { userIds: onlineUserIds });
-    console.log('📋 Liste utilisateurs en ligne envoyée à', userId, ':', onlineUserIds.length, 'utilisateurs');
-
-    // Informer les autres que cet utilisateur est en ligne
-    socket.broadcast.emit('user:online', { userId });
 
     // ===============================================
     // 🏠 REJOINDRE UNE CONVERSATION
     // ===============================================
     socket.on('conversation:join', async (data) => {
       try {
-        const { conversationId } = data;
-        console.log(`📥 ${userId} rejoint conversation:`, conversationId);
+        const { conversationId } = data || {};
+        if (!mongoose.Types.ObjectId.isValid(conversationId)) return;
 
-        // Vérifier que la conversation existe et que l'utilisateur y participe
-        const conversation = await Conversation.findById(conversationId);
-        
+        const conversation = await Conversation.findById(conversationId).select('participants').lean();
         if (!conversation) {
           return socket.emit('error', { message: 'Conversation introuvable' });
         }
 
         const isBuyer = conversation.participants.buyer.toString() === userId;
         const isSeller = conversation.participants.seller.toString() === userId;
-
         if (!isBuyer && !isSeller) {
           return socket.emit('error', { message: 'Accès non autorisé' });
         }
 
-        // Rejoindre la room de la conversation
         socket.join(conversationId);
-        console.log(`✅ ${userId} a rejoint la room:`, conversationId);
+        socket.data.contacts.add(otherParticipantId(conversation, userId)); // nouvelle conversation
 
-        // Marquer comme livres les messages recus par cet utilisateur mais pas encore livres.
+        // Marquer comme livrés les messages reçus mais pas encore livrés
         const undeliveredMessages = await Message.find({
           conversationId,
           senderId: { $ne: userId },
           delivered: false,
-        }).select('_id senderId');
+        }).select('_id senderId').lean();
 
         if (undeliveredMessages.length > 0) {
           const deliveredAt = new Date();
@@ -234,17 +197,14 @@ const setupSocketHandlers = (io) => {
               deliveredAt,
               recipientId: userId,
               senderId: msg.senderId.toString(),
-              connectedUsersMap: connectedUsers,
             });
           });
         }
 
-        // Notifier l'autre participant que l'utilisateur a rejoint
         socket.to(conversationId).emit('user:joined', {
           userId,
           userName: socket.userData.name
         });
-
       } catch (error) {
         console.error('❌ Erreur rejoindre conversation:', error);
         socket.emit('error', { message: 'Erreur lors de la connexion à la conversation' });
@@ -256,10 +216,8 @@ const setupSocketHandlers = (io) => {
     // ===============================================
     socket.on('message:send', async (data) => {
       try {
-        const { conversationId, content, type = 'text', attachments = [], offerDetails } = data;
-        console.log(`📤 ${userId} envoie message dans:`, conversationId);
+        const { conversationId, content, type = 'text', attachments = [], offerDetails } = data || {};
 
-        // Vérifier la conversation
         const conversation = await Conversation.findById(conversationId)
           .populate('participants.buyer', 'name avatar')
           .populate('participants.seller', 'name avatar');
@@ -270,14 +228,21 @@ const setupSocketHandlers = (io) => {
 
         const isBuyer = conversation.participants.buyer._id.toString() === userId;
         const isSeller = conversation.participants.seller._id.toString() === userId;
-
         if (!isBuyer && !isSeller) {
           return socket.emit('error', { message: 'Accès non autorisé' });
         }
 
-        // Créer le message dans la BD
         const sender = isBuyer ? conversation.participants.buyer : conversation.participants.seller;
         const isPostClosure = Boolean(conversation.closedByOwner);
+        const otherUserId = isBuyer
+          ? conversation.participants.seller._id.toString()
+          : conversation.participants.buyer._id.toString();
+
+        // Destinataire connecté → livré dès la création (1 écriture au lieu de 2)
+        const recipientOnline = await isUserOnline(io, otherUserId);
+        const now = new Date();
+        const deliveredAt = recipientOnline ? now : null;
+
         const message = await Message.create({
           conversationId,
           senderId: userId,
@@ -287,57 +252,18 @@ const setupSocketHandlers = (io) => {
           type,
           attachments,
           offerDetails,
-          timestamp: new Date().toISOString(),
+          timestamp: now.toISOString(),
           read: false,
+          delivered: recipientOnline,
+          deliveredAt,
           postClosure: isPostClosure
         });
 
-        // Mettre à jour la conversation
-        conversation.lastMessage = {
-          id: message._id,
-          content: message.content,
-          senderId: message.senderId.toString(),
-          senderName: message.senderName,
-          timestamp: message.timestamp,
-          delivered: false,
-          deliveredAt: null,
-          read: false,
-          readAt: null,
-          type: message.type,
-          postClosure: isPostClosure
-        };
+        await recordLastMessage(conversation, message, { isBuyer, deliveredAt, postClosure: isPostClosure });
 
-        // Incrémenter le compteur de non-lus pour le destinataire
-        if (isBuyer) {
-          conversation.unreadCount.seller += 1;
-        } else {
-          conversation.unreadCount.buyer += 1;
-        }
+        io.to(conversationId).emit('message:new', message.toMessageJSON());
 
-        conversation.updatedAt = new Date();
-        await conversation.save();
-
-        const messageJSON = message.toMessageJSON();
-
-        console.log(`✅ Message créé:`, { id: messageJSON.id, senderId: messageJSON.senderId, read: messageJSON.read });
-
-        // Envoyer le message à tous les participants de la conversation
-        io.to(conversationId).emit('message:new', messageJSON);
-
-        // Envoyer une notification à l'autre participant s'il n'est pas dans la conversation
-        const otherUserId = isBuyer 
-          ? conversation.participants.seller._id.toString()
-          : conversation.participants.buyer._id.toString();
-
-        if (connectedUsers.has(otherUserId)) {
-          const deliveredAt = new Date();
-          message.delivered = true;
-          message.deliveredAt = deliveredAt;
-          await message.save();
-          conversation.lastMessage.delivered = true;
-          conversation.lastMessage.deliveredAt = deliveredAt;
-          await conversation.save();
-
+        if (recipientOnline) {
           emitMessageDelivered({
             io,
             conversationId,
@@ -345,34 +271,25 @@ const setupSocketHandlers = (io) => {
             deliveredAt,
             recipientId: otherUserId,
             senderId: userId,
-            connectedUsersMap: connectedUsers,
           });
         }
 
-        // Notifier l'autre utilisateur même s'il n'est pas dans la room
-        if (connectedUsers.has(otherUserId)) {
-          const otherUserSockets = connectedUsers.get(otherUserId);
-          otherUserSockets.forEach(socketId => {
-            io.to(socketId).emit('conversation:updated', {
-              conversationId,
-              lastMessage: conversation.lastMessage,
-              unreadCount: isBuyer ? conversation.unreadCount.seller : conversation.unreadCount.buyer
-            });
-            // Notifier du changement du compteur global
-            io.to(socketId).emit('unreadCount:changed');
-          });
-        }
+        // Destinataire, même hors de la conversation : aperçu + nouveau total de non-lus
+        io.to(userRoom(otherUserId)).emit('conversation:updated', {
+          conversationId,
+          lastMessage: conversation.lastMessage,
+          unreadCount: isBuyer ? conversation.unreadCount.seller : conversation.unreadCount.buyer
+        });
+        emitUnreadCount(io, otherUserId);
 
-        await notifyRecipientNewMessage({
+        // Notification push en arrière-plan
+        notifyRecipientNewMessage({
           recipientId: otherUserId,
           conversationId,
           senderName: sender.name,
           content,
           type,
         });
-
-        console.log('✅ Message envoyé:', message._id);
-
       } catch (error) {
         console.error('❌ Erreur envoi message:', error);
         socket.emit('error', { message: 'Erreur lors de l\'envoi du message' });
@@ -380,95 +297,61 @@ const setupSocketHandlers = (io) => {
     });
 
     // ===============================================
-    // 👁️ MARQUER COMME LU
+    // 👁️ MARQUER UN MESSAGE COMME LU
     // ===============================================
+    // (L'app mobile utilise désormais PUT /conversations/:id/read, qui traite tous les
+    //  messages en une fois ; cet événement reste pour le client web.)
     socket.on('message:read', async (data) => {
       try {
-        const { messageId, conversationId } = data;
-        console.log(`👁️ ${userId} marque message comme lu:`, messageId);
+        const { messageId, conversationId } = data || {};
+        if (!mongoose.Types.ObjectId.isValid(messageId)) return;
 
-        const message = await Message.findById(messageId);
+        const now = new Date();
+        // Mise à jour atomique et conditionnelle : ne fait rien si déjà lu ou si c'est notre message
+        const message = await Message.findOneAndUpdate(
+          { _id: messageId, senderId: { $ne: userId }, read: false },
+          [{ $set: { read: true, readAt: now, delivered: true, deliveredAt: { $ifNull: ['$deliveredAt', now] } } }],
+          { new: true, projection: { senderId: 1, conversationId: 1, deliveredAt: 1, readAt: 1 } }
+        ).lean();
+        if (!message) return;
 
-        if (!message) {
-          return socket.emit('error', { message: 'Message introuvable' });
-        }
-
-        // Ne peut marquer comme lu que si on n'est pas l'expéditeur
-        if (message.senderId.toString() === userId) {
-          return;
-        }
-
-        await message.markAsRead();
-
-        if (!message.delivered) {
-          message.delivered = true;
-          message.deliveredAt = message.readAt || new Date();
-          await message.save();
-        }
+        const convId = String(message.conversationId || conversationId);
+        const senderId = message.senderId.toString();
 
         emitMessageDelivered({
           io,
-          conversationId,
+          conversationId: convId,
           messageId,
           deliveredAt: message.deliveredAt,
           recipientId: userId,
-          senderId: message.senderId.toString(),
-          connectedUsersMap: connectedUsers,
+          senderId,
         });
-
-        // Notifier tous les participants de la conversation (y compris l'expéditeur)
-        console.log(`📢 Émission de message:read pour conversation ${conversationId}, message ${messageId}`);
-        io.to(conversationId).emit('message:read', {
-          conversationId,
+        io.to(convId).to(userRoom(senderId)).emit('message:read', {
+          conversationId: convId,
           messageId,
           readAt: message.readAt
         });
 
-        // Notifier aussi directement l'expéditeur du message s'il est connecté
-        const senderId = message.senderId.toString();
-        if (connectedUsers.has(senderId)) {
-          const senderSockets = connectedUsers.get(senderId);
-          console.log(`📢 Notification directe à l'expéditeur ${senderId} (${senderSockets.size} sockets)`);
-          senderSockets.forEach(socketId => {
-            io.to(socketId).emit('message:read', {
-              conversationId,
-              messageId,
-              readAt: message.readAt
-            });
-          });
-        }
-
-        // Décrémenter le compteur de non-lus dans la conversation
-        const conversation = await Conversation.findById(conversationId);
+        // Compteur de non-lus et aperçu : une écriture atomique
+        const conversation = await Conversation.findById(convId).select('participants lastMessage.id').lean();
         if (conversation) {
-          if (conversation.lastMessage?.id?.toString() === messageId) {
-            conversation.lastMessage.delivered = true;
-            conversation.lastMessage.deliveredAt = message.deliveredAt || conversation.lastMessage.deliveredAt || new Date();
-            conversation.lastMessage.read = true;
-            conversation.lastMessage.readAt = message.readAt || new Date();
-          }
-
-          const isBuyer = conversation.participants.buyer.toString() === userId;
-          
-          if (isBuyer && conversation.unreadCount.buyer > 0) {
-            conversation.unreadCount.buyer -= 1;
-          } else if (!isBuyer && conversation.unreadCount.seller > 0) {
-            conversation.unreadCount.seller -= 1;
-          }
-          
-          await conversation.save();
-
-          // Notifier l'utilisateur du changement du compteur global
-          if (connectedUsers.has(userId)) {
-            const userSockets = connectedUsers.get(userId);
-            userSockets.forEach(socketId => {
-              io.to(socketId).emit('unreadCount:changed');
+          const role = conversation.participants.buyer.toString() === userId ? 'buyer' : 'seller';
+          const set = {};
+          if (conversation.lastMessage?.id?.toString() === String(messageId)) {
+            Object.assign(set, {
+              'lastMessage.delivered': true,
+              'lastMessage.deliveredAt': message.deliveredAt,
+              'lastMessage.read': true,
+              'lastMessage.readAt': message.readAt,
             });
           }
+          await Conversation.updateOne(
+            { _id: convId, [`unreadCount.${role}`]: { $gt: 0 } },
+            { $inc: { [`unreadCount.${role}`]: -1 }, ...(Object.keys(set).length ? { $set: set } : {}) },
+            { timestamps: false }
+          );
+          emitUnreadCount(io, userId);
         }
-
-        console.log('✅ Message marqué comme lu');
-
       } catch (error) {
         console.error('❌ Erreur marquage message:', error);
         socket.emit('error', { message: 'Erreur lors du marquage du message' });
@@ -479,8 +362,8 @@ const setupSocketHandlers = (io) => {
     // ✍️ UTILISATEUR EN TRAIN DE TAPER
     // ===============================================
     socket.on('typing:start', (data) => {
-      const { conversationId, type } = data;
-      console.log(`✍️ ${userId} commence à taper dans:`, conversationId);
+      const { conversationId, type } = data || {};
+      if (!conversationId) return;
       socket.to(conversationId).emit('typing:start', {
         userId,
         userName: socket.userData.name,
@@ -490,8 +373,8 @@ const setupSocketHandlers = (io) => {
     });
 
     socket.on('typing:stop', (data) => {
-      const { conversationId } = data;
-      console.log(`✍️ ${userId} arrête de taper dans:`, conversationId);
+      const { conversationId } = data || {};
+      if (!conversationId) return;
       socket.to(conversationId).emit('typing:stop', {
         userId,
         userName: socket.userData.name,
@@ -503,11 +386,10 @@ const setupSocketHandlers = (io) => {
     // 🚪 QUITTER UNE CONVERSATION
     // ===============================================
     socket.on('conversation:leave', (data) => {
-      const { conversationId } = data;
-      console.log(`🚪 ${userId} quitte conversation:`, conversationId);
-      
+      const { conversationId } = data || {};
+      if (!conversationId) return;
+
       socket.leave(conversationId);
-      
       socket.to(conversationId).emit('user:left', {
         userId,
         userName: socket.userData.name
@@ -517,20 +399,14 @@ const setupSocketHandlers = (io) => {
     // ===============================================
     // ❌ DÉCONNEXION
     // ===============================================
-    socket.on('disconnect', (reason) => {
-      console.log('❌ Utilisateur déconnecté:', userId, 'Socket:', socket.id, 'Raison:', reason);
-
-      // Retirer le socket de la map
-      if (connectedUsers.has(userId)) {
-        const userSockets = connectedUsers.get(userId);
-        userSockets.delete(socket.id);
-        
-        // Si l'utilisateur n'a plus de sockets connectés, le retirer complètement
-        if (userSockets.size === 0) {
-          connectedUsers.delete(userId);
-          // Informer les autres que l'utilisateur est hors ligne
-          socket.broadcast.emit('user:offline', { userId });
-        }
+    socket.on('disconnect', async () => {
+      try {
+        // Hors ligne seulement quand le dernier appareil se déconnecte — et seuls ses contacts sont prévenus
+        if (!socket.data.contacts?.size) return;
+        if (await isUserOnline(io, userId)) return;
+        io.to(contactRooms(socket.data.contacts)).emit('user:offline', { userId });
+      } catch (error) {
+        console.error('⚠️ Erreur présence (déconnexion):', error.message);
       }
     });
 
@@ -542,17 +418,9 @@ const setupSocketHandlers = (io) => {
     });
   });
 
-  // Retourner les utilisateurs connectés (utile pour le debug)
+  // Utilitaires exposés aux contrôleurs HTTP
   return {
-    getConnectedUsers: () => {
-      return connectedUsers; // Retourner la Map complète
-    },
-    getConnectedUserIds: () => {
-      return Array.from(connectedUsers.keys());
-    },
-    isUserOnline: (userId) => {
-      return connectedUsers.has(userId);
-    }
+    isUserOnline: (userId) => isUserOnline(io, userId), // asynchrone
   };
 };
 

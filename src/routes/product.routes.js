@@ -77,4 +77,9 @@ router.patch('/:id/promote', protect, productController.promoteProduct);
 // @access  Private (propriétaire uniquement)
 router.patch('/:id/toggle-status', protect, productController.toggleStatus);
 
+// @route   PATCH /api/products/:id/mark-sold
+// @desc    Marquer une annonce comme vendue
+// @access  Private (propriétaire uniquement)
+router.patch('/:id/mark-sold', protect, productController.markSold);
+
 module.exports = router;

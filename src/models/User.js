@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { publicAvatar } = require('../utils/avatar');
 
 const userSchema = new mongoose.Schema({
   // 📱 Authentification (phone ou email — au moins l'un des deux)
@@ -142,10 +143,19 @@ const userSchema = new mongoose.Schema({
     }
   },
   
-  // �🔑 Refresh Token
+  // 🔑 Refresh Token (ancien format : une seule session à la fois — conservé pour les
+  // sessions ouvertes avant la mise à jour)
   refreshToken: {
     type: String,
     select: false
+  },
+
+  // 🔑 Sessions actives : empreintes SHA-256 des refresh tokens, une par appareil
+  // (app mobile, navigateurs…). Se connecter sur un appareil ne déconnecte plus les autres.
+  refreshTokens: {
+    type: [String],
+    select: false,
+    default: undefined
   },
   
   // 🚫 Compte actif
@@ -211,7 +221,7 @@ userSchema.methods.toSellerJSON = function(totalListings = 0) {
     id: this._id.toString(),
     name: this.name,
     businessName: this.businessName,
-    avatar: this.avatar,
+    avatar: publicAvatar(this.avatar),
     rating: this.sellerStats.rating,
     totalReviews: this.sellerStats.totalReviews,
     verified: this.verified,
@@ -268,7 +278,7 @@ userSchema.methods.toPublicJSON = function() {
   return {
     id: this._id.toString(),
     name: this.name,
-    avatar: this.avatar,
+    avatar: publicAvatar(this.avatar),
     businessName: this.businessName,
     businessType: this.businessType,
     location: this.location,

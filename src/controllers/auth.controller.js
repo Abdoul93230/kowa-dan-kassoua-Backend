@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Product = require('../models/Product');
@@ -71,11 +72,23 @@ const generateAccessToken = (userId) => {
 // 🔄 Générer Refresh Token
 const generateRefreshToken = (userId) => {
   return jwt.sign(
-    { id: userId }, 
-    process.env.JWT_REFRESH_SECRET || 'dev_refresh_secret_key_2026', 
+    // jti : rend chaque jeton unique, même pour deux connexions dans la même seconde
+    { id: userId, jti: crypto.randomUUID() },
+    process.env.JWT_REFRESH_SECRET || 'dev_refresh_secret_key_2026',
     { expiresIn: process.env.JWT_REFRESH_EXPIRE || '30d' }
   );
 };
+
+// 📱 Sessions multi-appareils : on garde l'empreinte SHA-256 de chaque refresh token
+// (jamais le jeton lui-même), une par appareil, les 10 plus récentes.
+// Avant : un seul jeton par compte → se connecter sur le téléphone invalidait la session
+// du site, qui affichait « Votre session a expiré » à l'expiration du jeton d'accès.
+const MAX_SESSIONS = 10;
+const hashToken = (token) => crypto.createHash('sha256').update(String(token)).digest('hex');
+const rememberRefreshToken = (userId, token) => User.updateOne(
+  { _id: userId },
+  { $push: { refreshTokens: { $each: [hashToken(token)], $slice: -MAX_SESSIONS } } }
+);
 
 // ===============================================
 // 📝 INSCRIPTION (Register)
@@ -201,8 +214,8 @@ exports.register = async (req, res) => {
       const accessToken = generateAccessToken(existingUser._id);
       const refreshToken = generateRefreshToken(existingUser._id);
 
-      existingUser.refreshToken = refreshToken;
       await existingUser.save();
+      await rememberRefreshToken(existingUser._id, refreshToken);
 
       return res.status(201).json({
         success: true,
@@ -264,8 +277,8 @@ exports.register = async (req, res) => {
     const refreshToken = generateRefreshToken(user._id);
 
     // 💾 Sauvegarder le refresh token
-    user.refreshToken = refreshToken;
     await user.save();
+    await rememberRefreshToken(user._id, refreshToken);
 
     // ✅ Réponse succès
     res.status(201).json({
@@ -386,8 +399,8 @@ exports.login = async (req, res) => {
     const refreshToken = generateRefreshToken(user._id);
 
     // 💾 Sauvegarder le refresh token
-    user.refreshToken = refreshToken;
     await user.save();
+    await rememberRefreshToken(user._id, refreshToken);
 
     // ✅ Réponse succès
     res.status(200).json({
@@ -429,20 +442,35 @@ exports.refreshToken = async (req, res) => {
       });
     }
 
-    // ✅ Vérifier le refresh token
-    const decoded = jwt.verify(
-      refreshToken,
-      process.env.JWT_REFRESH_SECRET || 'dev_refresh_secret_key_2026'
-    );
+    // ✅ Vérifier le refresh token (signature + expiration)
+    let decoded;
+    try {
+      decoded = jwt.verify(
+        refreshToken,
+        process.env.JWT_REFRESH_SECRET || 'dev_refresh_secret_key_2026'
+      );
+    } catch (jwtError) {
+      return res.status(401).json({
+        success: false,
+        message: 'Refresh token expiré ou invalide'
+      });
+    }
 
-    // 🔍 Trouver l'utilisateur
-    const user = await User.findById(decoded.id).select('+refreshToken');
-    
-    if (!user || user.refreshToken !== refreshToken) {
+    // 🔍 La session doit exister pour cet appareil (ou ancien format à jeton unique)
+    const user = await User.findById(decoded.id).select('+refreshToken +refreshTokens');
+    const knownSession = Boolean(user?.refreshTokens?.includes(hashToken(refreshToken)));
+    const legacySession = Boolean(user?.refreshToken && user.refreshToken === refreshToken);
+
+    if (!user || (!knownSession && !legacySession)) {
       return res.status(401).json({
         success: false,
         message: 'Refresh token invalide'
       });
+    }
+
+    // Session ouverte avant la mise à jour : migrée vers le format multi-appareils
+    if (legacySession && !knownSession) {
+      await rememberRefreshToken(user._id, refreshToken);
     }
 
     // 🔑 Générer nouveau access token
@@ -456,9 +484,12 @@ exports.refreshToken = async (req, res) => {
     });
 
   } catch (error) {
-    res.status(401).json({
+    // Erreur serveur (base indisponible…) : ce n'est PAS une session expirée,
+    // le client ne doit pas déconnecter l'utilisateur
+    console.error('❌ Erreur refresh token:', error.message);
+    res.status(500).json({
       success: false,
-      message: 'Refresh token expiré ou invalide'
+      message: 'Erreur serveur, réessayez'
     });
   }
 };
@@ -471,12 +502,11 @@ exports.refreshToken = async (req, res) => {
 // @access  Private
 exports.logout = async (req, res) => {
   try {
-    // req.user est ajouté par le middleware protect
-    const user = await User.findById(req.user.id);
-    
-    if (user) {
-      user.refreshToken = null;
-      await user.save();
+    // Ne ferme que la session de cet appareil : les autres (téléphone, autre navigateur) restent connectés
+    const { refreshToken } = req.body || {};
+    if (refreshToken) {
+      await User.updateOne({ _id: req.user._id }, { $pull: { refreshTokens: hashToken(refreshToken) } });
+      await User.updateOne({ _id: req.user._id, refreshToken }, { $unset: { refreshToken: 1 } });
     }
 
     res.status(200).json({
@@ -1405,8 +1435,8 @@ exports.quickRegister = async (req, res) => {
     const accessToken = generateAccessToken(user._id);
     const refreshToken = generateRefreshToken(user._id);
 
-    user.refreshToken = refreshToken;
     await user.save();
+    await rememberRefreshToken(user._id, refreshToken);
 
     // 📤 Envoyer le mot de passe temporaire par SMS ou par email
     await deliverToIdentity(identity, {

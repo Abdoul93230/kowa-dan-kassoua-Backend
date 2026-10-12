@@ -1,5 +1,6 @@
 const Favorite = require('../models/Favorite');
 const Product = require('../models/Product');
+const { findProducts } = require('../utils/productSerializer');
 
 // ===============================================
 // ⭐ AJOUTER AUX FAVORIS
@@ -12,36 +13,29 @@ exports.addFavorite = async (req, res) => {
     const { productId } = req.params;
     const userId = req.user._id;
 
-    // Vérifier si le produit existe
-    const product = await Product.findById(productId);
-    if (!product) {
+    if (!(await Product.exists({ _id: productId }))) {
       return res.status(404).json({
         success: false,
         message: 'Produit introuvable'
       });
     }
 
-    // Vérifier si déjà en favoris
-    const existingFavorite = await Favorite.findOne({
-      user: userId,
-      product: productId
-    });
-
-    if (existingFavorite) {
-      return res.status(400).json({
-        success: false,
-        message: 'Produit déjà dans vos favoris'
-      });
+    // L'index unique (user, product) garantit l'absence de doublon, même en cas de double tap
+    let favorite;
+    try {
+      favorite = await Favorite.create({ user: userId, product: productId });
+    } catch (error) {
+      if (error?.code === 11000) {
+        return res.status(400).json({
+          success: false,
+          message: 'Produit déjà dans vos favoris'
+        });
+      }
+      throw error;
     }
 
-    // Créer le favori
-    const favorite = await Favorite.create({
-      user: userId,
-      product: productId
-    });
-
-    // Incrémenter le compteur de favoris du produit
-    await product.incrementFavorites();
+    // Compteur du produit : incrément atomique (sans relire ni réécrire tout le document)
+    await Product.updateOne({ _id: productId }, { $inc: { favorites: 1 } }, { timestamps: false });
 
     res.status(201).json({
       success: true,
@@ -70,11 +64,7 @@ exports.removeFavorite = async (req, res) => {
     const { productId } = req.params;
     const userId = req.user._id;
 
-    // Chercher le favori
-    const favorite = await Favorite.findOne({
-      user: userId,
-      product: productId
-    });
+    const favorite = await Favorite.findOneAndDelete({ user: userId, product: productId });
 
     if (!favorite) {
       return res.status(404).json({
@@ -83,14 +73,12 @@ exports.removeFavorite = async (req, res) => {
       });
     }
 
-    // Supprimer le favori
-    await Favorite.deleteOne({ _id: favorite._id });
-
-    // Décrémenter le compteur de favoris du produit
-    const product = await Product.findById(productId);
-    if (product) {
-      await product.decrementFavorites();
-    }
+    // Décrément atomique, sans descendre sous zéro
+    await Product.updateOne(
+      { _id: productId, favorites: { $gt: 0 } },
+      { $inc: { favorites: -1 } },
+      { timestamps: false }
+    );
 
     res.status(200).json({
       success: true,
@@ -116,44 +104,37 @@ exports.removeFavorite = async (req, res) => {
 exports.getMyFavorites = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { page = 1, limit = 20 } = req.query;
+    const pageNum = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
+    const view = req.query.view === 'card' ? 'card' : 'full';
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // 1) Identifiants seulement (avant : tous les favoris avec produit ET vendeur complets,
+    //    puis 3 requêtes par annonce — le coût grandissait avec chaque favori ajouté)
+    const favorites = await Favorite.find({ user: userId }).sort('-createdAt').select('product').lean();
+    const orderedIds = favorites.map((f) => f.product).filter(Boolean);
 
-    // Récupérer tous les favoris pour compter les actifs
-    const allFavorites = await Favorite.find({ user: userId })
-      .populate({
-        path: 'product',
-        populate: {
-          path: 'seller'
-        }
-      })
-      .sort('-createdAt');
-
-    // Filtrer les produits supprimés ET les produits non actifs
-    const activeFavorites = allFavorites.filter(f => f.product && f.product.status === 'active');
-    
-    // Compter uniquement les favoris actifs
-    const total = activeFavorites.length;
-    
-    // Paginer les favoris actifs
-    const paginatedFavorites = activeFavorites.slice(skip, skip + parseInt(limit));
-
-    // Transformer en format Item
-    const items = await Promise.all(
-      paginatedFavorites.map(async (f) => {
-        return f.product.toItemJSON();
-      })
+    // 2) Ne garder que les annonces encore en ligne, dans l'ordre des favoris
+    const activeIds = new Set(
+      (await Product.find({ _id: { $in: orderedIds }, status: 'active' }).select('_id').lean())
+        .map((p) => String(p._id))
     );
+    const activeOrdered = orderedIds.filter((id) => activeIds.has(String(id)));
+    const total = activeOrdered.length;
+
+    // 3) Charger uniquement la page demandée, en lot
+    const pageIds = activeOrdered.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+    const items = await findProducts({ _id: { $in: pageIds } }, { limit: limitNum, view });
+    const position = new Map(pageIds.map((id, i) => [String(id), i]));
+    items.sort((a, b) => position.get(a.id) - position.get(b.id));
 
     res.status(200).json({
       success: true,
       data: items,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: pageNum,
+        limit: limitNum,
         total,
-        pages: Math.ceil(total / parseInt(limit))
+        pages: Math.ceil(total / limitNum)
       }
     });
 
@@ -210,14 +191,14 @@ exports.getFavoriteIds = async (req, res) => {
   try {
     const userId = req.user._id;
 
-    const favorites = await Favorite.find({ user: userId })
-      .populate('product', 'status')
-      .select('product');
-    
+    const favorites = await Favorite.find({ user: userId }).select('product').lean();
+    const active = await Product.find({
+      _id: { $in: favorites.map((f) => f.product).filter(Boolean) },
+      status: 'active'
+    }).select('_id').lean();
+
     // Ne retourner que les IDs des produits actifs
-    const productIds = favorites
-      .filter(f => f.product && f.product.status === 'active')
-      .map(f => f.product._id.toString());
+    const productIds = active.map((p) => p._id.toString());
 
     res.status(200).json({
       success: true,

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { publicAvatar } = require('../utils/avatar');
 
 const productSchema = new mongoose.Schema({
   // 👤 Vendeur
@@ -243,7 +244,7 @@ productSchema.methods.toItemJSON = async function () {
     })() : {
       id: this.seller._id.toString(),
       name: this.seller.name,
-      avatar: this.seller.avatar
+      avatar: publicAvatar(this.seller.avatar)
     },
     sellerId: this.seller._id.toString(),
     promoted: this.promoted,
@@ -264,11 +265,14 @@ productSchema.methods.toItemJSON = async function () {
   };
 };
 
-// 🔍 Index pour recherche et performance
-productSchema.index({ seller: 1, status: 1 });
+// 🔍 Index alignés sur les requêtes réelles (filtre + tri couverts par le même index)
+productSchema.index({ seller: 1, status: 1, createdAt: -1 });   // Mes annonces, page vendeur, stats vendeurs
 productSchema.index({ category: 1, status: 1 });
-productSchema.index({ categorySlug: 1, status: 1 }); // Index pour recherche par slug
-productSchema.index({ status: 1, createdAt: -1 });
+productSchema.index({ categorySlug: 1, status: 1, createdAt: -1 }); // Pages catégorie
+productSchema.index({ status: 1, createdAt: -1 });                // Fil « récemment publiées »
+productSchema.index({ status: 1, type: 1, createdAt: -1 });       // Onglets Produits / Services
+productSchema.index({ status: 1, views: -1 });                    // Tendances
+productSchema.index({ status: 1, location: 1, createdAt: -1 });   // Filtre par ville
 productSchema.index({ promoted: 1, featured: 1 });
 productSchema.index({ title: 'text', description: 'text' });
 productSchema.index({ 'location': 1 });

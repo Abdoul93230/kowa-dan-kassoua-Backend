@@ -2,6 +2,18 @@ const express = require('express');
 const router = express.Router();
 const categoryController = require('../controllers/category.controller');
 const { protect } = require('../middleware/auth');
+const cache = require('../utils/cache');
+
+// Toute écriture sur les catégories périme les caches (liste des catégories et accueil)
+router.use((req, res, next) => {
+  if (req.method !== 'GET') {
+    res.on('finish', () => {
+      cache.invalidate('categories:');
+      cache.invalidate('home:');
+    });
+  }
+  next();
+});
 
 // ===============================================
 // 📋 ROUTES PUBLIQUES

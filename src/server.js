@@ -8,6 +8,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 
 const connectDB = require('./config/database');
+const { connectRedis } = require('./config/redis');
 const errorHandler = require('./middleware/errorHandler');
 
 // Load environment variables
@@ -41,7 +42,8 @@ app.use(cors({
   credentials: true
 }));
 app.use(compression()); // Compress responses
-app.use(morgan('dev')); // Logging
+// Journal de chaque requête : utile en dev, coûteux (I/O synchrone) en production
+if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 app.use(express.json({ limit: '20mb' })); // Parse JSON - marge pour les avatars encodés
 app.use(express.urlencoded({ extended: true, limit: '20mb' })); // Parse URL-encoded
 
@@ -50,6 +52,7 @@ app.set('io', io);
 
 // Routes
 app.use('/api/auth', require('./routes/auth.routes'));
+app.use('/api/home', require('./routes/home.routes'));
 app.use('/api/products', require('./routes/product.routes'));
 app.use('/api/categories', require('./routes/category.routes'));
 app.use('/api/favorites', require('./routes/favorite.routes'));
@@ -87,11 +90,32 @@ const socketUtils = setupSocketHandlers(io);
 // Make socket utils available globally (optional)
 app.set('socketUtils', socketUtils);
 
+// Redis (facultatif, REDIS_URL) : cache partagé + Socket.IO sur plusieurs serveurs.
+// Sans Redis, démarrage normal en mode serveur unique.
+const enableRedis = async () => {
+  const redis = await connectRedis();
+  if (!redis) return;
+  try {
+    const { createAdapter } = require('@socket.io/redis-adapter');
+    const pubClient = redis.duplicate();
+    const subClient = redis.duplicate();
+    pubClient.on('error', () => {});
+    subClient.on('error', () => {});
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+    io.adapter(createAdapter(pubClient, subClient));
+    console.log('📡 Socket.IO multi-serveurs (adaptateur Redis)');
+  } catch (error) {
+    console.error('⚠️ Adaptateur Socket.IO Redis non activé:', error.message);
+  }
+};
+
 // Start server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
-  console.log(`📡 Socket.IO ready for messaging`);
+enableRedis().finally(() => {
+  server.listen(PORT, () => {
+    console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+    console.log(`📡 Socket.IO ready for messaging`);
+  });
 });
 
 // Handle unhandled promise rejections
