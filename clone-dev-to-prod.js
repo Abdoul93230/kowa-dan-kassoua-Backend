@@ -24,7 +24,7 @@ const APPLY = process.argv.includes('--apply');
 const mappingArg = process.argv.find((a) => a.startsWith('--mapping='));
 const MAPPING_FILE = mappingArg ? mappingArg.split('=')[1] : path.join(__dirname, 'clone-category-mapping.json');
 
-const SOURCE_URI = process.env.SOURCE_MONGODB_URI || process.env.MONGODB_URI;
+const SOURCE_URI = process.env.SOURCE_MONGODB_URI; // jamais de valeur par défaut : la source doit être explicite
 const TARGET_URI = process.env.TARGET_MONGODB_URI;
 
 const COPIED = ['users', 'products', 'favorites', 'conversations', 'messages', 'reviews'];
@@ -78,11 +78,21 @@ async function run() {
   const source = (await mongoose.createConnection(SOURCE_URI).asPromise()).db;
   const target = (await mongoose.createConnection(TARGET_URI).asPromise()).db;
 
-  console.log(`Source (dev)  : ${hostOf(SOURCE_URI)}`);
-  console.log(`Cible  (prod) : ${hostOf(TARGET_URI)}`);
+  console.log(`Source (dev)  : ${hostOf(SOURCE_URI)}  (base : ${source.databaseName})`);
+  console.log(`Cible  (prod) : ${hostOf(TARGET_URI)}  (base : ${target.databaseName})`);
+
+  // Garde-fous : la source doit être une base TakTak (catégories + annonces), et pas la base par défaut « test »
+  const sourceCols = (await source.listCollections().toArray()).map((c) => c.name);
+  if (source.databaseName === 'test' || target.databaseName === 'test') {
+    throw new Error("Nom de base absent de l'URI (base « test » utilisée). Ajoutez /kowa-dan-kassoua-DB à la fin de l'URI.");
+  }
+  const missing = ['categories', 'products', 'users'].filter((n) => !sourceCols.includes(n));
+  if (missing.length) {
+    throw new Error(`La source ne ressemble pas à une base TakTak (collections manquantes : ${missing.join(', ')}). Mauvaise URI ?`);
+  }
   console.log(APPLY ? '⚙️  MODE APPLICATION — la prod va être modifiée\n' : '🔍 MODE SIMULATION — rien ne sera écrit (ajoutez --apply)\n');
 
-  const others = (await source.listCollections().toArray()).map((c) => c.name).filter((n) => !COPIED.includes(n) && n !== 'categories');
+  const others = sourceCols.filter((n) => !COPIED.includes(n) && n !== 'categories');
   if (others.length) console.log(`ℹ️  Collections non copiées : ${others.join(', ')}\n`);
 
   // ─── Catégories : dev (slug) -> prod (id + slug + sous-catégorie) ───────────
