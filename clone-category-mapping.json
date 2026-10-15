@@ -1,0 +1,65 @@
+{
+  "_comment": "Correspondance catégories DEV -> PROD. Clé : 'categorieDev/sousCategorieDev' ou 'categorieDev/*' (par défaut pour cette catégorie). Valeur : 'categorieProd/sousCategorieProd' (slugs de la prod). 'titleRules' : règles prioritaires sur le titre de l'annonce. 'fallback' : utilisé si rien ne correspond.",
+
+  "titleRules": [
+    { "devCategory": "electronique", "pattern": "r[ée]par", "target": "telephonie-materiel-electronique/reparation" }
+  ],
+
+  "map": {
+    "electronique/telephones": "telephonie-materiel-electronique/electronique-info",
+    "electronique/ordinateurs": "telephonie-materiel-electronique/electronique-info",
+    "electronique/tablettes": "telephonie-materiel-electronique/electronique-info",
+    "electronique/accessoires": "telephonie-materiel-electronique/electronique-info",
+    "electronique/services-it": "prestation-intellectuelle/informatique",
+    "electronique/*": "telephonie-materiel-electronique/electronique-info",
+
+    "alimentation/restaurants": "petits-commerces/restauration",
+    "alimentation/traiteur": "petits-commerces/restauration",
+    "alimentation/produits-frais": "alimentation-produits-frais/legumes",
+    "alimentation/epicerie": "alimentation-produits-frais/epicerie",
+    "alimentation/patisserie": "alimentation-produits-frais/autres",
+    "alimentation/soins-beaute": "habillement-beaute/cosmetiques",
+    "alimentation/*": "alimentation-produits-frais/autres",
+
+    "immobilier/location-appartements": "immobilier/locations",
+    "immobilier/bureaux": "immobilier/locations",
+    "immobilier/vente-maisons": "immobilier/vente-maisons",
+    "immobilier/terrains": "immobilier/parcelles",
+    "immobilier/services": "immobilier/demarcheur",
+    "immobilier/*": "immobilier/locations",
+
+    "vehicules/motos": "transport-mecanique-energie/motos",
+    "vehicules/pieces": "transport-mecanique-energie/mecanique-auto",
+    "vehicules/services-auto": "transport-mecanique-energie/mecanique-auto",
+    "vehicules/*": "transport-mecanique-energie/autres",
+
+    "mode/soins-beaute": "habillement-beaute/cosmetiques",
+    "mode/coiffure": "habillement-beaute/coiffure",
+    "mode/*": "habillement-beaute/autres",
+
+    "services/plomberie": "prestation-intellectuelle/btp",
+    "services/electricite": "prestation-intellectuelle/btp",
+    "services/jardinage": "maison-bricolage/autres",
+    "services/*": "petits-commerces/autres",
+
+    "maison/meubles": "maison-bricolage/ameublement",
+    "maison/decoration": "maison-bricolage/ameublement",
+    "maison/*": "maison-bricolage/autres",
+
+    "emploi/*": "prestation-intellectuelle/conseil",
+
+    "loisirs/jeux-video": "sante-education-loisirs/jeux",
+    "loisirs/livres": "sante-education-loisirs/librairie",
+    "loisirs/plomberie": "prestation-intellectuelle/btp",
+    "loisirs/*": "sante-education-loisirs/autres",
+
+    "materiaux/construction": "maison-bricolage/quincaillerie",
+    "materiaux/outillage": "maison-bricolage/quincaillerie",
+    "materiaux/equipements-pro": "maison-bricolage/quincaillerie",
+    "materiaux/*": "maison-bricolage/autres",
+
+    "autres/*": "petits-commerces/autres"
+  },
+
+  "fallback": "petits-commerces/autres"
+}
