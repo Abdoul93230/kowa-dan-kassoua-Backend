@@ -250,7 +250,7 @@ exports.deleteCategory = async (req, res) => {
 exports.addSubcategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, slug, description, icon } = req.body;
+    const { name, slug, description, icon, types } = req.body;
     
     const category = await Category.findById(id);
     
@@ -270,7 +270,7 @@ exports.addSubcategory = async (req, res) => {
       });
     }
     
-    category.subcategories.push({ name, slug, description, icon });
+    category.subcategories.push({ name, slug, description, icon, ...(Array.isArray(types) ? { types } : {}) });
     await category.save();
     
     res.status(201).json({

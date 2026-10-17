@@ -20,6 +20,11 @@ const subcategorySchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  // Ce qu'on peut y publier : produits, services ou les deux (absent = les deux)
+  types: {
+    type: [{ type: String, enum: ['product', 'service'] }],
+    default: undefined
+  },
   active: {
     type: Boolean,
     default: true
@@ -59,6 +64,11 @@ const categorySchema = new mongoose.Schema({
     default: 'bg-gray-100 text-gray-600'
   },
   subcategories: [subcategorySchema],
+  // Ce qu'on peut y publier : produits, services ou les deux (absent = les deux)
+  types: {
+    type: [{ type: String, enum: ['product', 'service'] }],
+    default: undefined
+  },
   active: {
     type: Boolean,
     default: true

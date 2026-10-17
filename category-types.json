@@ -1,0 +1,79 @@
+{
+  "_comment": "Ce qu'on peut publier dans chaque sous-catégorie : product, service ou les deux. Clé 'categorie/sous-categorie' (slugs). Absente = les deux. 'serviceCategories' : catégories dont toutes les sous-catégories sont des services. 'add' : sous-catégories à créer pour que chaque catégorie propose quelque chose aux produits ET aux services. Utilisé par set-category-types.js.",
+
+  "serviceCategories": ["prestation-intellectuelle", "livraison"],
+
+  "types": {
+    "alimentation-produits-frais/epicerie": ["product"],
+    "alimentation-produits-frais/legumes": ["product"],
+    "alimentation-produits-frais/cereales": ["product"],
+    "alimentation-produits-frais/boucherie": ["product"],
+    "alimentation-produits-frais/kilishi": ["product"],
+    "alimentation-produits-frais/poisson": ["product"],
+    "alimentation-produits-frais/poisson-fume": ["product"],
+    "alimentation-produits-frais/supermarche": ["product"],
+
+    "habillement-beaute/tissus-pagnes": ["product"],
+    "habillement-beaute/friperie": ["product"],
+    "habillement-beaute/tailleur": ["service"],
+    "habillement-beaute/cosmetiques": ["product"],
+    "habillement-beaute/coiffure": ["service"],
+
+    "telephonie-materiel-electronique/mobile-money": ["service"],
+    "telephonie-materiel-electronique/reparation": ["service"],
+    "telephonie-materiel-electronique/electronique-info": ["product"],
+
+    "transport-mecanique-energie/motos": ["product"],
+    "transport-mecanique-energie/mecanique-auto": ["service"],
+    "transport-mecanique-energie/gaz": ["product"],
+
+    "maison-bricolage/quincaillerie": ["product"],
+    "maison-bricolage/ameublement": ["product"],
+
+    "produits-agricoles-d-elevage/betail": ["product"],
+    "produits-agricoles-d-elevage/aliments-betail": ["product"],
+    "produits-agricoles-d-elevage/intrants-outils": ["product"],
+
+    "sante-education-loisirs/pharmacie": ["product"],
+    "sante-education-loisirs/pharmacopee": ["product"],
+    "sante-education-loisirs/librairie": ["product"],
+
+    "petits-commerces/essence": ["product"],
+    "petits-commerces/kiosque-a-the": ["product"],
+    "petits-commerces/eau-jus": ["product"],
+    "petits-commerces/pressing": ["service"],
+    "petits-commerces/taxi": ["service"],
+    "petits-commerces/taxi-moto": ["service"],
+    "petits-commerces/tresseuse": ["service"],
+
+    "immobilier/vente-maisons": ["product"],
+    "immobilier/parcelles": ["product"],
+    "immobilier/demarcheur": ["service"]
+  },
+
+  "add": {
+    "alimentation-produits-frais": [
+      { "slug": "traiteur", "name": "Traiteur & cuisine", "icon": "🧑‍🍳", "types": ["service"] },
+      { "slug": "moulin", "name": "Moulin & transformation", "icon": "🥣", "types": ["service"] }
+    ],
+    "maison-bricolage": [
+      { "slug": "plomberie", "name": "Plomberie", "icon": "🚿", "types": ["service"] },
+      { "slug": "electricite", "name": "Électricité", "icon": "⚡", "types": ["service"] },
+      { "slug": "peinture", "name": "Peinture & déco", "icon": "🖌️", "types": ["service"] }
+    ],
+    "produits-agricoles-d-elevage": [
+      { "slug": "veterinaire", "name": "Vétérinaire", "icon": "💉", "types": ["service"] },
+      { "slug": "travaux-agricoles", "name": "Travaux agricoles", "icon": "🧑‍🌾", "types": ["service"] }
+    ],
+    "sante-education-loisirs": [
+      { "slug": "soins", "name": "Soins & santé", "icon": "🩹", "types": ["service"] },
+      { "slug": "cours", "name": "Cours & formation", "icon": "🎓", "types": ["service"] }
+    ],
+    "prestation-intellectuelle": [
+      { "slug": "materiel-bureau", "name": "Matériel de bureau", "icon": "🖨️", "types": ["product"] }
+    ],
+    "livraison": [
+      { "slug": "materiel-livraison", "name": "Matériel de livraison", "icon": "🎒", "types": ["product"] }
+    ]
+  }
+}
