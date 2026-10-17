@@ -63,10 +63,9 @@ async function run() {
     toAdd.forEach((s) => console.log(`    + ${s.icon} ${s.name} (${s.types.join(' + ')})`));
 
     if (!APPLY) continue;
-    const update = {};
-    if (Object.keys(set).length) update.$set = set;
-    if (toAdd.length) update.$push = { subcategories: { $each: toAdd } };
-    await db.collection('categories').updateOne({ _id: cat._id }, update);
+    // Deux écritures : MongoDB refuse de modifier et d'allonger le même tableau en une seule
+    if (Object.keys(set).length) await db.collection('categories').updateOne({ _id: cat._id }, { $set: set });
+    if (toAdd.length) await db.collection('categories').updateOne({ _id: cat._id }, { $push: { subcategories: { $each: toAdd } } });
   }
 
   console.log(`\n${changes} modification(s) ${APPLY ? 'appliquée(s)' : 'à appliquer'}.`);
