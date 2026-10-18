@@ -59,6 +59,8 @@ app.use('/api/favorites', require('./routes/favorite.routes'));
 app.use('/api/conversations', require('./routes/conversation.routes'));
 app.use('/api/messages', require('./routes/message.routes'));
 app.use('/api/reviews', require('./routes/review.routes'));
+app.use('/api/reports', require('./routes/report.routes'));
+app.use('/api/admin', require('./routes/admin.routes'));
 // TODO: Créer les autres routes
 // app.use('/api/users', require('./routes/user.routes'));
 // app.use('/api/orders', require('./routes/order.routes'));

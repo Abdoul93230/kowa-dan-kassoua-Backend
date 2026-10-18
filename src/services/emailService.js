@@ -125,8 +125,23 @@ const sendTempPasswordEmail = (to, tempPassword) =>
     }),
   });
 
+// Invitation d'un administrateur : identifiant + mot de passe temporaire
+const sendAdminInviteEmail = (to, tempPassword, loginUrl) =>
+  sendEmail({
+    to,
+    subject: `${APP_NAME} - Votre accès administrateur`,
+    text: `${APP_NAME} - Accès administrateur. Identifiant : ${to}. Mot de passe temporaire : ${tempPassword}. Connectez-vous sur ${loginUrl} et changez-le dès la première connexion.`,
+    html: buildCodeHtml({
+      title: "Votre accès administrateur",
+      intro: `Un compte administrateur TakTak a été créé pour ${to}. Connectez-vous avec cette adresse e-mail et ce mot de passe temporaire :`,
+      code: tempPassword,
+      footer: `Connexion : ${loginUrl}. Vous devrez choisir votre propre mot de passe à la première connexion. Si vous n'attendiez pas cet accès, ignorez cet e-mail.`,
+    }),
+  });
+
 module.exports = {
   sendEmail,
+  sendAdminInviteEmail,
   sendOtpEmail,
   sendResetCodeEmail,
   sendTempPasswordEmail,

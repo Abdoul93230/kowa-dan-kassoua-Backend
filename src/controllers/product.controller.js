@@ -17,6 +17,9 @@ const searchRegex = (value = '') => {
 
 // Filtre ville : « Niamey » trouve « Niamey, Niger » (préfixe → utilise l'index location)
 const locationFilter = (value = '') => new RegExp(`^${searchRegex(value).source}`, 'i');
+// Prix facultatif : on ne garde que les chiffres ; vide ou absent = « 0 » (0 F)
+const normalizePrice = (value) => String(value ?? '').replace(/[^\d]/g, '') || '0';
+
 exports.locationFilter = locationFilter;
 
 // Les données publiques (accueil, stats, villes) sont mises en cache : on les invalide
@@ -130,11 +133,11 @@ exports.createProduct = async (req, res) => {
       featured
     } = req.body;
 
-    // ✅ Validation des champs obligatoires
-    if (!title || !category || !price) {
+    // ✅ Validation des champs obligatoires (le prix est facultatif : vide = 0 F)
+    if (!title || !category) {
       return res.status(400).json({
         success: false,
-        message: 'Champs obligatoires manquants : title, category, price'
+        message: 'Champs obligatoires manquants : title, category'
       });
     }
 
@@ -203,7 +206,7 @@ exports.createProduct = async (req, res) => {
       subcategory: subcategory || '',
       subcategorySlug: subcategory ? subcategory.toLowerCase().replace(/\s+/g, '-') : '',
       type: type || 'product',
-      price,
+      price: normalizePrice(price),
       location: productLocation,
       condition: condition || 'used',
       quantity: quantity || '1',
@@ -600,7 +603,8 @@ exports.updateProduct = async (req, res) => {
     if (category) product.category = category;
     if (subcategory !== undefined) product.subcategory = subcategory;
     if (type) product.type = type;
-    if (price) product.price = price;
+    // Prix facultatif : vide ou absent à l'édition = 0 F
+    if (price !== undefined) product.price = normalizePrice(price);
     if (location) {
       // ✅ Normaliser le format de localisation pour garantir "Ville, Pays"
       let normalizedLocation = location;
