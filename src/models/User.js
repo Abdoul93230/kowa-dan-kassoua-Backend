@@ -232,10 +232,8 @@ userSchema.methods.toSellerJSON = function(totalListings = 0) {
     location: this.location,
     city: this.location,
     bio: this.description,
+    // Profil public : jamais de téléphone, WhatsApp ni email (contact via la messagerie uniquement)
     contactInfo: {
-      phone: this.phone,
-      whatsapp: this.contactInfo.whatsapp,
-      email: this.email,
       website: this.contactInfo.website,
       facebook: this.contactInfo.facebook,
       instagram: this.contactInfo.instagram
