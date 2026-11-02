@@ -180,6 +180,12 @@ const userSchema = new mongoose.Schema({
   isMinimalAccount: {
     type: Boolean,
     default: false
+  },
+
+  // 🧪 Compte de démonstration (revue Apple / Google) : voir create-review-account.js
+  isDemoAccount: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true  // createdAt, updatedAt
